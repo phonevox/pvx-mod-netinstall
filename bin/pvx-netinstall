@@ -29,9 +29,10 @@ produtos:
   issabel5   instala o Issabel 5 (Rocky/CentOS/RHEL 8) do zero
   issabel4   instala o Issabel 4 (CentOS/RHEL-like) do zero
 
-Sem produto, com terminal interativo, abre um seletor. Cada produto tem sua própria
-lista de flags — rode `pvx netinstall <produto> --help` pra ver as opções (astver,
-idioma, timezone, senhas, --upfront, --no-tmux, --no-reboot, --force, --dry-run, --yes).
+Sem produto, com terminal interativo, abre um seletor. Cada produto tem sua própria lista de
+flags — rode `pvx netinstall <produto> --help` pra ver as opções (astver, idioma, timezone,
+senhas, --no-tmux, --no-reboot, --force, --dry-run, --yes). O que não vier por flag e tiver
+terminal disponível é perguntado na hora, um item de cada vez.
 
 ATENÇÃO: instala pacotes, desativa SELinux/firewalld e reinicia o servidor ao final.
 Rode só numa máquina descartável/recém-provisionada, nunca contra uma central em produção.

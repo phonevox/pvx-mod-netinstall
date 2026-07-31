@@ -44,15 +44,6 @@ netinstall::run_issabel5() {
 
   # shellcheck disable=SC2034 # lida por netinstall::preflight em lib/common.sh
   NETINSTALL_FORCE=${PVX_FLAG_VALUE[force]:-0}
-  local mode=interactive
-  if (( ${PVX_FLAG_VALUE[upfront]:-0} )); then
-    mode=upfront
-    # upfront = pergunta o que falta UMA vez (abaixo) e depois roda sem mais nenhuma
-    # confirmação — inclusive a de netinstall::confirm_destructive e o reboot final.
-    # shellcheck disable=SC2034 # lida por exec::confirm em lib/exec.sh (pvx-core)
-    PVX_ASSUME_YES=1
-  fi
-  log::debug 'netinstall issabel5: modo=%s' "$mode"
   local has_tty=0
   [[ -t 0 && -t 1 ]] && has_tty=1
 
@@ -216,10 +207,8 @@ netinstall::_issabel5_set_timezone() {
 netinstall::_issabel5_set_passwords() {
   log::info 'netinstall issabel5: definindo senhas de acesso (MySQL root / admin Web)...'
   local sql_pw web_pw
-  sql_pw=$(flag::get sql-password '')
-  web_pw=$(flag::get web-password '')
-  [[ -z $sql_pw ]] && sql_pw=$(netinstall::gen_password)
-  [[ -z $web_pw ]] && web_pw=$(netinstall::gen_password)
+  sql_pw=$(netinstall::resolve_secret_or_ask sql-password 'Defina a senha do MySQL')
+  web_pw=$(netinstall::resolve_secret_or_ask web-password 'Defina a senha da interface Web')
   log::add_secret "$sql_pw"
   log::add_secret "$web_pw"
 

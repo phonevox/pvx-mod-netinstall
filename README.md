@@ -8,11 +8,13 @@ do core via `$PVX_LIB_DIR`, sempre injetado pelo dispatcher do `pvx`).
 
 Instala Issabel 4 ou Issabel 5 do zero numa máquina Rocky/CentOS/RHEL-like limpa e
 recém-provisionada — pacotes, Asterisk, MariaDB, ajustes de SELinux/firewalld, timezone,
-senhas de acesso, e reboot final. Dois modos de execução:
+senhas de acesso, e reboot final.
 
-- **interativo** (padrão): pergunta cada decisão conforme avança.
-- **upfront** (`--upfront`): pergunta tudo de uma vez no início (via flags e/ou wizard) e roda
-  o resto sem mais interação — pensado pra instalação em lote via SSH, sem alguém olhando.
+Não existe um modo "interativo" separado de um modo "desassistido" — é sempre a mesma regra:
+o que foi passado por flag não pergunta nada; o que faltou, se tem terminal, pergunta só
+aquilo (uma pergunta por vez, nunca um wizard de tudo junto); sem terminal e sem flag, erro
+claro dizendo o que falta. Passe todas as flags de uma vez pra rodar 100% sem interação (ex:
+instalação em lote via SSH); passe só algumas e responda o resto na hora.
 
 ## Instalação
 
@@ -24,7 +26,8 @@ pvx modules install git@github.com:phonevox/pvx-mod-netinstall.git
 
 ```sh
 pvx netinstall issabel5 --astver 18
-pvx netinstall issabel4 --upfront --astver 16 --addpkgs licensed --addpkgs community-blocklist
+pvx netinstall issabel4 --astver 16 --addpkgs licensed --addpkgs community-blocklist \
+  --sql-password-file /root/.netinstall-sql --web-password-file /root/.netinstall-web
 pvx            # menu interativo: netinstall > issabel5/issabel4
 ```
 

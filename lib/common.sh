@@ -90,6 +90,45 @@ netinstall::ensure_tmux() {
   exec tmux new-session -s "$session" -- "$0" "$produto" "$@"
 }
 
+# netinstall::ask_password <rótulo> — prompt mascarado (sem eco, igual a um `sudo`); enter
+# vazio (ou sem TTY nenhum) gera uma senha aleatória em vez de aceitar "" como senha de
+# verdade — nunca trava esperando teclado fora de terminal interativo.
+#
+# Só checa "-t 0" (stdin), NUNCA "-t 1" (stdout): esta função é sempre chamada via
+# `v=$(netinstall::ask_password ...)` pra capturar o valor — e a própria substituição de
+# comando redireciona o stdout do que está dentro pra um pipe, o que faz "-t 1" dar falso
+# SEMPRE, mesmo com terminal de verdade (achado rodando de verdade: a pergunta nunca
+# disparava, sempre gerava senha aleatória mesmo digitando algo). stdin não é tocado pelo
+# $(...), então "-t 0" continua refletindo o terminal real do processo inteiro.
+netinstall::ask_password() {
+  local label=$1 v=''
+  if [[ -t 0 ]]; then
+    read -rsp "$label (enter pra gerar aleatória): " v </dev/tty 2>/dev/null || v=''
+    printf '\n' >&2
+  fi
+  [[ -z $v ]] && v=$(netinstall::gen_password)
+  printf '%s' "$v"
+}
+
+# netinstall::resolve_secret_or_ask <flag> <rótulo> — usa o valor já resolvido por
+# --<flag>/--<flag>-file/variável de ambiente se qualquer um desses foi dado (mesma prioridade
+# de flag::_resolve_secret); só cai em netinstall::ask_password se nenhum dos três veio —
+# assim a pergunta usa nosso texto (com "gera aleatória" explícito) em vez do prompt genérico
+# de lib/flags.sh, sem duplicar a lógica de resolução de --flag/--flag-file/env.
+netinstall::resolve_secret_or_ask() {
+  local long=$1 label=$2 env
+  if flag::has "$long" || flag::has "$long-file"; then
+    flag::get "$long"
+    return 0
+  fi
+  env=${PVX_FLAG_ENV[$long]:-}
+  if [[ -n $env && -n ${!env:-} ]]; then
+    flag::get "$long"
+    return 0
+  fi
+  netinstall::ask_password "$label"
+}
+
 # netinstall::gen_password — senha aleatória por instalação (nunca um default fixo
 # hardcoded/compartilhado entre máquinas, ao contrário do legado).
 netinstall::gen_password() {
@@ -143,15 +182,17 @@ netinstall::install_packages() {
 
 # netinstall::flags_shared — flags comuns a `issabel4`/`issabel5`. Cada produto ainda declara
 # a própria `--astver` (enum diferente por versão suportada) depois de chamar isto.
-# --sql-password/--web-password via flag::add_secret já resolvem sozinhas, nesta ordem: flag
-# explícita -> --*-file -> variável de ambiente -> prompt mascarado se houver TTY -> fallback
-# (ver flag::_resolve_secret) — não precisa de lógica de wizard própria pra senha.
+#
+# Contrato único, sem modo "interativo vs upfront" separado: pra cada informação (astver,
+# addpkgs, senha, ...), se a flag correspondente foi dada, usa ela e não pergunta nada; se
+# faltou e tem TTY, pergunta SÓ aquela informação (nunca um wizard de tudo de uma vez, nunca
+# tudo intercalado igual o legado); sem TTY e sem flag, erro claro do que falta. Senhas usam
+# netinstall::resolve_secret_or_ask (flag/--*-file/env têm prioridade; só cai no prompt
+# próprio se nenhum dos três veio).
 netinstall::flags_shared() {
   flag::add lang --default pt_BR --help 'idioma do sistema/Issabel'
   flag::add timezone --default 'America/Sao_Paulo' --help 'timezone do sistema e do PHP'
   flag::add addpkgs --repeat --help 'pacote adicional a instalar (pode repetir a flag)'
-  flag::add upfront --type bool \
-    --help 'pergunta tudo antes (flags e/ou wizard) e roda sem mais interação'
   # nomes positivos de propósito: "--no-X" já é sintaxe nativa do lib/flags.sh pra negar um
   # bool chamado "X" (flag::parse trata qualquer token "--no-*" assim) — declarar um flag
   # literalmente chamado "no-tmux" colide com isso (`--no-tmux` seria lido como "negar um flag
