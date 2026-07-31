@@ -64,7 +64,12 @@ netinstall::preflight() {
     exit "$PVX_EXIT_UNAVAILABLE"
   fi
 
-  exec::require_cmd rpm curl tmux || exit "$PVX_EXIT_UNAVAILABLE"
+  # tmux NÃO entra aqui de propósito: netinstall::ensure_tmux já trata a ausência dele como
+  # best-effort (avisa e segue sem sessão persistente) — exigir aqui também contradiria isso e
+  # travava a instalação inteira por falta de um pacote que é só uma melhoria de robustez,
+  # não um requisito real. Achado de verdade: o aviso de "continuando sem tmux" aparecia e,
+  # duas linhas depois, o preflight abortava mesmo assim.
+  exec::require_cmd rpm curl || exit "$PVX_EXIT_UNAVAILABLE"
   return 0
 }
 
