@@ -40,9 +40,23 @@ netinstall::preflight() {
     log::error 'netinstall: sem acesso de rede (PVX_OFFLINE=1 ou curl ausente) — impossível baixar pacotes/repositórios'
     exit "$PVX_EXIT_UNAVAILABLE"
   fi
-  if ! curl -fsS --connect-timeout 5 --max-time 8 -o /dev/null "$NETINSTALL_MIRROR_PROBE_URL" 2>/dev/null; then
-    log::error 'netinstall: não foi possível alcançar %s — confira a rede/DNS antes de continuar' \
-      "$NETINSTALL_MIRROR_PROBE_URL"
+  local probe_rc=0
+  curl -fsS --connect-timeout 5 --max-time 8 -o /dev/null "$NETINSTALL_MIRROR_PROBE_URL" 2>/dev/null || probe_rc=$?
+  if ((probe_rc != 0)); then
+    # dnf/yum vão bater nesse mesmo mirror via http:// mais adiante (ver config/repos*/*.repo) —
+    # se a checagem falha aqui, a instalação de pacotes de verdade ia falhar do mesmo jeito lá
+    # na frente, só que 15-20 minutos depois. Traduz o rc do curl pra apontar a causa provável
+    # em vez de um "confira a rede" genérico — achado numa VPS onde ping/ICMP funcionava mas a
+    # porta 80 estava bloqueada (curl rc=28, timeout de conexão).
+    local motivo='motivo desconhecido'
+    case $probe_rc in
+      6) motivo='DNS não resolveu o host' ;;
+      7) motivo='conexão recusada — nada escutando ou bloqueado antes de chegar no host' ;;
+      28) motivo='timeout de conexão — porta provavelmente bloqueada por firewall (ping/ICMP pode funcionar mesmo assim, é outra porta)' ;;
+      22 | 35 | 60) motivo='servidor respondeu, mas com erro HTTP/TLS' ;;
+    esac
+    log::error 'netinstall: não foi possível alcançar %s (curl rc=%d: %s)' \
+      "$NETINSTALL_MIRROR_PROBE_URL" "$probe_rc" "$motivo"
     exit "$PVX_EXIT_UNAVAILABLE"
   fi
 
