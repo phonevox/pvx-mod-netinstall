@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# hooks/install — no-op real (registra a chamada), mesmo padrão do modules/dummy: nada a
+# preparar além do state dir em si (sem config_files, sem integração persistente pra inicializar).
+set -Eeuo pipefail
+: "${PVX_MODULE_STATE_DIR:?PVX_MODULE_STATE_DIR não definido}"
+mkdir -p "$PVX_MODULE_STATE_DIR"
+ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '?')
+printf 'install %s %s\n' "${PVX_MODULE_VERSION:-?}" "$ts" >>"$PVX_MODULE_STATE_DIR/hooks.log"
+exit 0

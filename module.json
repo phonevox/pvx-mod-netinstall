@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "name": "netinstall",
+  "command": "netinstall",
+  "version": "0.1.0",
+  "summary": "Instalação netinstall (des)assistida do Issabel 4/5",
+  "description": "Instala Issabel 4 ou 5 do zero numa máquina Rocky/CentOS/RHEL-like limpa, em modo interativo (pergunta conforme avança) ou upfront (pergunta tudo antes e roda desassistido). Não desfaz nem reconfigura uma instalação já existente.",
+  "entrypoint": "bin/pvx-netinstall",
+  "requires_root": true,
+  "hooks": {
+    "install": "hooks/install",
+    "uninstall": "hooks/uninstall",
+    "update": "hooks/update",
+    "logs": null
+  },
+  "requires": { "pvx_core": ">=0.1.0", "modules": [], "packages": ["bash", "tmux", "curl"] },
+  "os": { "families": ["rhel"] },
+  "provides": { "actions": ["issabel4", "issabel5"] },
+  "config_files": [],
+  "state_dir": true
+}

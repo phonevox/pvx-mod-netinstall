@@ -1,0 +1,33 @@
+[issabel-base]
+name=Base RPM Repository for Issabel
+mirrorlist=http://mirror.issabel.org/?release=4&arch=$basearch&repo=base
+gpgcheck=0
+enabled=1
+gpgkey=http://repo.issabel.org/issabel/RPM-GPG-KEY-Issabel
+
+[issabel-updates]
+name=Updates RPM Repository for Issabel
+mirrorlist=http://mirror.issabel.org/?release=4&arch=$basearch&repo=updates
+gpgcheck=0
+enabled=1
+gpgkey=http://repo.issabel.org/issabel/RPM-GPG-KEY-Issabel
+
+[issabel-updates-sources]
+name=Updates RPM Repository for Issabel
+mirrorlist=http://mirror.issabel.org/?release=4&arch=$basearch&repo=updates
+gpgcheck=0
+enabled=1
+gpgkey=http://repo.issabel.org/issabel/RPM-GPG-KEY-Issabel
+
+[issabel-beta]
+name=Beta RPM Repository for Issabel
+mirrorlist=http://mirror.issabel.org/?release=4&arch=$basearch&repo=beta
+baseurl=http://repo.issabel.org/issabel/4/beta/$basearch/
+enabled=0
+
+[issabel-extras]
+name=Extras RPM Repository for Issabel
+mirrorlist=http://mirror.issabel.org/?release=4&arch=$basearch&repo=extras
+gpgcheck=1
+enabled=1
+gpgkey=http://repo.issabel.org/issabel/RPM-GPG-KEY-Issabel

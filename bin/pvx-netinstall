@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# modules/netinstall/bin/pvx-netinstall — entrypoint do módulo "netinstall". Nunca vendoriza
+# cópia própria de lib do core — sempre `source` via PVX_LIB_DIR (contrato de módulo, ver
+# docs/module-authoring.md). lib/{common,issabel4,issabel5}.sh são exclusivas deste módulo,
+# localizadas via PVX_MODULE_DIR (também garantido pelo dispatcher antes de chamar isto).
+set -Eeuo pipefail
+
+: "${PVX_LIB_DIR:?PVX_LIB_DIR não definido — este módulo deve ser executado via pvx, não direto}"
+: "${PVX_MODULE_DIR:?PVX_MODULE_DIR não definido — este módulo deve ser executado via pvx, não direto}"
+# shellcheck source=/dev/null
+source "$PVX_LIB_DIR/bootstrap.sh"
+pvx::install_traps
+pvx::require color log os exec tui flags net
+color::init
+log::init
+
+# shellcheck source=/dev/null
+source "$PVX_MODULE_DIR/lib/common.sh"
+# shellcheck source=/dev/null
+source "$PVX_MODULE_DIR/lib/issabel4.sh"
+# shellcheck source=/dev/null
+source "$PVX_MODULE_DIR/lib/issabel5.sh"
+
+netinstall::usage() {
+  cat <<'EOF'
+uso: pvx netinstall <produto> [flags]
+
+produtos:
+  issabel5   instala o Issabel 5 (Rocky/CentOS/RHEL 8) do zero
+  issabel4   instala o Issabel 4 (CentOS/RHEL-like) do zero
+
+Sem produto, com terminal interativo, abre um seletor. Cada produto tem sua própria
+lista de flags — rode `pvx netinstall <produto> --help` pra ver as opções (astver,
+idioma, timezone, senhas, --upfront, --no-tmux, --no-reboot, --force, --dry-run, --yes).
+
+ATENÇÃO: instala pacotes, desativa SELinux/firewalld e reinicia o servidor ao final.
+Rode só numa máquina descartável/recém-provisionada, nunca contra uma central em produção.
+EOF
+}
+
+produto=${1:-}
+case $produto in
+  issabel5 | issabel4)
+    shift
+    "netinstall::run_${produto}" "$@"
+    exit $?
+    ;;
+  -h | --help | '')
+    if [[ -z $produto && -t 0 && -t 1 ]]; then
+      if ! tui::select "$(tui::breadcrumb netinstall)" issabel5 issabel4; then
+        exit 0
+      fi
+      "netinstall::run_${TUI_CHOICE}"
+      exit $?
+    fi
+    netinstall::usage
+    exit 0
+    ;;
+  *)
+    printf 'netinstall: produto desconhecido: %s\n' "$produto" >&2
+    netinstall::usage >&2
+    exit 2
+    ;;
+esac
