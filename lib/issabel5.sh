@@ -130,7 +130,7 @@ netinstall::_issabel5_add_repos() {
   srun -- dnf makecache
   log::info 'netinstall issabel5: instalando htop e tmux...'
   os::pkg_install htop tmux
-  run -- bash -c "echo 'net.ipv6.conf.all.disable_ipv6 = 1' >> /etc/sysctl.conf && sysctl -p"
+  run -- bash -c "grep -qxF 'net.ipv6.conf.all.disable_ipv6 = 1' /etc/sysctl.conf || echo 'net.ipv6.conf.all.disable_ipv6 = 1' >> /etc/sysctl.conf; sysctl -p"
 
   local repo_dir=$PVX_MODULE_DIR/config/repos
   if [[ -d $repo_dir ]]; then
