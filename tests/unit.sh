@@ -98,5 +98,26 @@ else
   _FAIL=$((_FAIL + 1))
 fi
 
+# --- SELinux só é desabilitado uma vez (prepare_system), não de novo em post_install --------
+PVX_DRY_RUN=1
+prepare_out=$(netinstall::_issabel5_prepare_system 2>&1)
+post_out=$(netinstall::_issabel5_post_install 2>&1)
+PVX_DRY_RUN=0
+
+if [[ $prepare_out == *setenforce* ]]; then
+  printf '  ok - _prepare_system desabilita SELinux\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - _prepare_system deveria desabilitar SELinux (setenforce ausente da saída)\n' >&2
+  _FAIL=$((_FAIL + 1))
+fi
+if [[ $post_out != *setenforce* ]]; then
+  printf '  ok - _post_install não repete a desabilitação de SELinux (já feita em prepare_system)\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - _post_install voltou a chamar setenforce (duplicação reintroduzida)\n' >&2
+  _FAIL=$((_FAIL + 1))
+fi
+
 printf '\n%d/%d testes passaram\n' "$_PASS" "$((_PASS + _FAIL))"
 ((_FAIL == 0))
