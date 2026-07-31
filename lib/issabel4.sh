@@ -92,6 +92,17 @@ netinstall::run_issabel4() {
     mapfile -t addpkgs < <(netinstall::_issabel4_resolve_addpkgs "${addpkgs_keys[@]}")
   fi
 
+  # Resolve (e SÓ resolve — não aplica ainda) as senhas AQUI, junto de astver/addpkgs, antes da
+  # confirmação destrutiva — mesmo achado do issabel5.sh (ver comentário lá): perguntar a senha
+  # só no fim, depois de repos+pacotes+post_install+timezone, quebra o contrato de "pergunta
+  # tudo que falta ANTES de começar" do README. Passa os valores já resolvidos adiante; QUEM
+  # aplica a senha continua sendo _set_passwords, na mesma ordem de sempre.
+  local sql_pw web_pw
+  sql_pw=$(netinstall::resolve_secret_or_ask sql-password 'Defina a senha do MySQL')
+  web_pw=$(netinstall::resolve_secret_or_ask web-password 'Defina a senha da interface Web')
+  log::add_secret "$sql_pw"
+  log::add_secret "$web_pw"
+
   log::info 'netinstall issabel4: Asterisk %s, pacotes extras: %s' "$astver" "${addpkgs_keys[*]:-nenhum}"
 
   if ! netinstall::confirm_destructive 'Prosseguir com a instalação do Issabel 4?'; then
@@ -104,7 +115,7 @@ netinstall::run_issabel4() {
   netinstall::_issabel4_install_packages "$astver" "${addpkgs[@]}"
   netinstall::_issabel4_post_install
   netinstall::_issabel4_set_timezone
-  netinstall::_issabel4_set_passwords
+  netinstall::_issabel4_set_passwords "$sql_pw" "$web_pw"
   netinstall::_issabel4_finish
 }
 
@@ -215,12 +226,8 @@ netinstall::_issabel4_set_timezone() {
 }
 
 netinstall::_issabel4_set_passwords() {
+  local sql_pw=$1 web_pw=$2
   log::info 'netinstall issabel4: definindo senhas de acesso (MySQL root / admin Web)...'
-  local sql_pw web_pw
-  sql_pw=$(netinstall::resolve_secret_or_ask sql-password 'Defina a senha do MySQL')
-  web_pw=$(netinstall::resolve_secret_or_ask web-password 'Defina a senha da interface Web')
-  log::add_secret "$sql_pw"
-  log::add_secret "$web_pw"
 
   if run --mask 3,4 -- /usr/bin/issabel-admin-passwords --cli init "$sql_pw" "$web_pw"; then
     :

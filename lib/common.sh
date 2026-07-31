@@ -6,6 +6,29 @@
 NETINSTALL_MIRROR_PROBE_URL=${NETINSTALL_MIRROR_PROBE_URL:-http://mirror.issabel.org}
 NETINSTALL_FORCE=${NETINSTALL_FORCE:-0}
 NETINSTALL_NO_TMUX=${NETINSTALL_NO_TMUX:-0}
+# RAM+swap mínimo (KB) pra tentar a instalação: abaixo disso o risco de OOM-killer matar o
+# `dnf install` (e o próprio pvx junto) no meio da transação é alto o bastante pra avisar
+# ANTES de começar, não deixar o operador descobrir pela morte súbita e muda do processo.
+NETINSTALL_MIN_MEM_KB=${NETINSTALL_MIN_MEM_KB:-$((1536 * 1024))}
+
+# netinstall::_mem_total_kb [arquivo] — soma MemTotal+SwapTotal (KB) de /proc/meminfo (ou de
+# um arquivo no mesmo formato, pra teste). Soma o TOTAL de swap, não o livre: swap alocável é
+# o que importa pro risco de OOM, já usado ou não no momento da checagem. Devolve 0 (não
+# bloqueia nada) se o arquivo não existir/não puder ser lido — ex: dentro de alguns
+# containers /proc/meminfo reflete o host e não o cgroup, mas preferimos otimista a bloquear
+# por um sinal que pode nem ser real ali dentro.
+netinstall::_mem_total_kb() {
+  local file=${1:-/proc/meminfo}
+  local mem_total=0 swap_total=0 k v
+  [[ -r $file ]] || { printf '0'; return 0; }
+  while read -r k v _; do
+    case $k in
+      MemTotal:) mem_total=$v ;;
+      SwapTotal:) swap_total=$v ;;
+    esac
+  done <"$file"
+  printf '%s' "$((mem_total + swap_total))"
+}
 
 # netinstall::preflight <produto> — bloqueia cedo em vez de deixar o `dnf install` de ~600
 # pacotes falhar 20 minutos depois. Cada checagem já loga o motivo específico antes de sair.
@@ -20,6 +43,28 @@ netinstall::preflight() {
   if os::is_container; then
     log::warn 'netinstall: rodando dentro de um container (%s) — systemd/firewalld/reboot podem se comportar de forma diferente de uma máquina real' \
       "$(os::pretty)"
+  fi
+
+  # Achado de verdade numa VPS pequena: um `dnf install` com dezenas de pacotes de uma vez só
+  # (LAMP completo + Asterisk + langpacks) pode inflar a memória do resolvedor de dependências
+  # o bastante pra derrubar o processo inteiro via OOM-killer — dnf E o pvx junto, sem log
+  # nenhum sobrando (o comando aparece em --debug, e depois nada: nem stdout, nem "-> rc=",
+  # nem "comando falhou", só o prompt do shell de volta). netinstall::install_packages já
+  # instala um pacote por vez por causa disso (ver mais abaixo), mas isso só reduz o risco —
+  # não zera. Avisa aqui com a máquina ainda intacta, não depois de já ter mexido em
+  # SELinux/repositórios.
+  local mem_total_kb
+  mem_total_kb=$(netinstall::_mem_total_kb)
+  if ((mem_total_kb > 0 && mem_total_kb < NETINSTALL_MIN_MEM_KB)); then
+    log::warn 'netinstall %s: RAM+swap total é de só %d MB (recomendado >= %d MB) — risco real de o dnf ser morto pelo OOM-killer no meio da instalação, sem aviso nenhum' \
+      "$produto" "$((mem_total_kb / 1024))" "$((NETINSTALL_MIN_MEM_KB / 1024))"
+    log::hint 'crie um swapfile antes de continuar: fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile'
+    if (( ! NETINSTALL_FORCE )); then
+      log::error 'netinstall %s: recusando continuar com RAM+swap insuficiente' "$produto"
+      log::hint 'use --force se tem certeza que quer arriscar mesmo assim'
+      exit "$PVX_EXIT_PRECONDITION"
+    fi
+    log::warn 'netinstall %s: continuando com RAM+swap insuficiente por causa de --force' "$produto"
   fi
 
   local existing_issabel existing_asterisk
@@ -176,17 +221,39 @@ netinstall::confirm_destructive() {
   exec::confirm "$msg (SELinux/firewalld serão desativados e o servidor será reiniciado) [s/N]" n
 }
 
-# netinstall::install_packages <rótulo> <pacote...> — substitui o yum_gauge/loop manual do
-# legado: deixa o próprio dnf/yum mostrar progresso real de uma vez só, em vez de recalcular
-# uma barra sintética pacote a pacote. Chamador é quem lê o arquivo de lista (mapfile) e faz a
-# substituição de placeholder (ver netinstall::render_astver_placeholder) antes de chamar isto.
+# netinstall::install_packages <rótulo> <pacote...> — um `dnf install` POR PACOTE, igual ao
+# loop do yum_gauge do legado (learning-materials/pissabel5/issabel5-netinstall.sh) — não um
+# único `dnf install pkg1 pkg2 ... pkgN` gigante. Achado de verdade: pedir dezenas de pacotes
+# de uma vez (LAMP completo + Asterisk + langpacks) faz o resolvedor de dependências (libsolv)
+# considerar um grafo bem maior de uma só vez, e numa VPS pequena isso é o bastante pra
+# estourar RAM e levar o OOM-killer a matar o processo inteiro — sem log nenhum sobrando (ver
+# netinstall::preflight logo acima, mesmo achado). Indo um pacote por vez: (1) cada transação
+# é trivial pro solver, dificilmente soma RAM o bastante pra matar algo; (2) se ainda assim
+# travar, o log já mostra exatamente "[N/M] pacote" e tudo ANTES daquele já foi instalado de
+# verdade — não perde a instalação inteira por causa de um pacote só. Continua a lista mesmo
+# se um pacote individual falhar (rc != 0 já vira "comando falhou" via run(), dentro de
+# os::pkg_install) — reporta o resumo dos que falharam no final, em vez de abortar os
+# restantes por causa de um nome de pacote ruim (igual ao legado, que gravava em
+# netinstall_errors.txt e seguia em frente).
 netinstall::install_packages() {
   local label=$1
   shift
   local -a pkgs=("$@")
-  ((${#pkgs[@]} == 0)) && return 0
-  log::info 'netinstall: instalando %s (%d pacotes)...' "$label" "${#pkgs[@]}"
-  os::pkg_install "${pkgs[@]}"
+  local total=${#pkgs[@]}
+  ((total == 0)) && return 0
+  log::info 'netinstall: instalando %s (%d pacotes, um por vez)...' "$label" "$total"
+  local -a failed=()
+  local i=0 pkg
+  for pkg in "${pkgs[@]}"; do
+    i=$((i + 1))
+    log::info 'netinstall: [%d/%d] %s...' "$i" "$total" "$pkg"
+    os::pkg_install "$pkg" || failed+=("$pkg")
+  done
+  if ((${#failed[@]})); then
+    log::warn 'netinstall: %d de %d pacotes de "%s" falharam: %s' \
+      "${#failed[@]}" "$total" "$label" "${failed[*]}"
+  fi
+  return 0
 }
 
 # netinstall::flags_shared — flags comuns a `issabel4`/`issabel5`. Cada produto ainda declara
@@ -208,7 +275,7 @@ netinstall::flags_shared() {
   # chamado tmux", que não existiria, e falharia como opção desconhecida).
   flag::add tmux --type bool --default 1 --help 'usa uma sessão tmux persistente (desligue com --no-tmux)'
   flag::add reboot --type bool --default 1 --help 'reinicia o servidor ao final (desligue com --no-reboot)'
-  flag::add force --type bool --help 'ignora a checagem de "já parece instalado"'
+  flag::add force --type bool --help 'ignora as checagens de "já parece instalado" e RAM+swap insuficiente'
   flag::add_secret sql-password --prompt 'senha root do MySQL desta instalação'
   flag::add_secret web-password --prompt 'senha admin da interface Web do Issabel'
 }

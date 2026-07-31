@@ -80,6 +80,21 @@ netinstall::run_issabel5() {
     mapfile -t addpkgs < <(netinstall::_issabel5_resolve_addpkgs "${addpkgs_keys[@]}")
   fi
 
+  # Resolve (e SÓ resolve — não aplica ainda) as senhas AQUI, junto de astver/addpkgs, antes da
+  # confirmação destrutiva. Achado de verdade: perguntar a senha só no fim (como era antes,
+  # dentro de _issabel5_set_passwords, chamada depois de repos+pacotes+post_install+painel+
+  # timezone) quebra o contrato de "pergunta tudo que falta ANTES de começar" do README — o
+  # operador confirma a instalação achando que já respondeu tudo, sai da tela por 15-20min de
+  # dnf, e ou volta pra achar o processo parado esperando teclado numa etapa tardia, ou (pior)
+  # a instalação cai no meio (rede, OOM, etc.) e a pergunta nunca chega a aparecer. Passa os
+  # valores já resolvidos adiante; QUEM aplica a senha continua sendo _set_passwords, na mesma
+  # ordem de sempre (só dá pra rodar issabel-admin-passwords depois do Issabel instalado).
+  local sql_pw web_pw
+  sql_pw=$(netinstall::resolve_secret_or_ask sql-password 'Defina a senha do MySQL')
+  web_pw=$(netinstall::resolve_secret_or_ask web-password 'Defina a senha da interface Web')
+  log::add_secret "$sql_pw"
+  log::add_secret "$web_pw"
+
   log::info 'netinstall issabel5: Asterisk %s, pacotes extras: %s' "$astver" "${addpkgs_keys[*]:-nenhum}"
 
   if ! netinstall::confirm_destructive 'Prosseguir com a instalação do Issabel 5?'; then
@@ -98,7 +113,7 @@ netinstall::run_issabel5() {
   netinstall::_issabel5_post_install
   netinstall::_issabel5_control_panel
   netinstall::_issabel5_set_timezone
-  netinstall::_issabel5_set_passwords
+  netinstall::_issabel5_set_passwords "$sql_pw" "$web_pw"
   netinstall::_issabel5_finish
 }
 
@@ -223,12 +238,8 @@ netinstall::_issabel5_set_timezone() {
 }
 
 netinstall::_issabel5_set_passwords() {
+  local sql_pw=$1 web_pw=$2
   log::info 'netinstall issabel5: definindo senhas de acesso (MySQL root / admin Web)...'
-  local sql_pw web_pw
-  sql_pw=$(netinstall::resolve_secret_or_ask sql-password 'Defina a senha do MySQL')
-  web_pw=$(netinstall::resolve_secret_or_ask web-password 'Defina a senha da interface Web')
-  log::add_secret "$sql_pw"
-  log::add_secret "$web_pw"
 
   if run --mask 3,4 -- /usr/bin/issabel-admin-passwords --cli init "$sql_pw" "$web_pw"; then
     :
