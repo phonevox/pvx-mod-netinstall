@@ -98,17 +98,29 @@ else
   _FAIL=$((_FAIL + 1))
 fi
 
-# --- SELinux só é desabilitado uma vez (prepare_system), não de novo em post_install --------
+# --- setenforce só roda se SELinux não estiver disabled já (evita rc=1 garantido nesse caso —
+# achado de verdade numa VPS onde "setenforce 0" sempre falha porque já está disabled) --------
+os::selinux_state() { printf 'enforcing'; }
 PVX_DRY_RUN=1
-prepare_out=$(netinstall::_issabel5_prepare_system 2>&1)
+enforcing_out=$(netinstall::_issabel5_prepare_system 2>&1)
+os::selinux_state() { printf 'disabled'; }
+disabled_out=$(netinstall::_issabel5_prepare_system 2>&1)
 post_out=$(netinstall::_issabel5_post_install 2>&1)
 PVX_DRY_RUN=0
+unset -f os::selinux_state
 
-if [[ $prepare_out == *setenforce* ]]; then
-  printf '  ok - _prepare_system desabilita SELinux\n'
+if [[ $enforcing_out == *setenforce* ]]; then
+  printf '  ok - _prepare_system chama setenforce quando SELinux não está disabled ainda\n'
   _PASS=$((_PASS + 1))
 else
-  printf '  FALHOU - _prepare_system deveria desabilitar SELinux (setenforce ausente da saída)\n' >&2
+  printf '  FALHOU - _prepare_system deveria chamar setenforce quando enforcing/permissive\n' >&2
+  _FAIL=$((_FAIL + 1))
+fi
+if [[ $disabled_out != *setenforce* ]]; then
+  printf '  ok - _prepare_system pula setenforce quando SELinux já está disabled\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - _prepare_system chamou setenforce mesmo já disabled (sempre falha com rc=1 nesse caso)\n' >&2
   _FAIL=$((_FAIL + 1))
 fi
 if [[ $post_out != *setenforce* ]]; then

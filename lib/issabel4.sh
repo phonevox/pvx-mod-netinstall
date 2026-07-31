@@ -122,8 +122,15 @@ netinstall::_issabel4_warn_stub_flags() {
 
 netinstall::_issabel4_prepare_system() {
   log::info 'netinstall issabel4: preparando o sistema (SELinux, grupo/usuário asterisk)...'
-  run -- setenforce 0
-  srun -- sed -i 's/\(^SELINUX=\).*/SELINUX=disabled/' /etc/selinux/config
+  local selinux_state
+  selinux_state=$(os::selinux_state)
+  log::debug 'netinstall issabel4: selinux_state=%s' "$selinux_state"
+  if [[ $selinux_state != disabled ]]; then
+    run --timeout 10 -- setenforce 0
+  fi
+  if [[ -f /etc/selinux/config ]]; then
+    srun -- sed -i 's/\(^SELINUX=\).*/SELINUX=disabled/' /etc/selinux/config
+  fi
   run -- /usr/sbin/groupadd -f -r asterisk
   if ! grep -q '^asterisk:' /etc/passwd 2>/dev/null; then
     srun -- /usr/sbin/useradd -r -g asterisk -c 'Asterisk PBX' -s /bin/bash -d /var/lib/asterisk asterisk
@@ -164,8 +171,6 @@ netinstall::_issabel4_post_install() {
   run -- mysql --defaults-extra-file="$defaults_file" -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('iSsAbEl.2o17')" 2>/dev/null ||
     run -- mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('iSsAbEl.2o17')"
 
-  run -- setenforce 0
-  srun -- sed -i 's/\(^SELINUX=\).*/SELINUX=disabled/' /etc/selinux/config
   srun -- cp -a /etc/sysconfig/iptables "/etc/sysconfig/iptables.org-issabel-$(date +%Y-%m-%d-%H-%M-%S)"
   srun -- systemctl enable httpd
   srun -- systemctl disable firewalld

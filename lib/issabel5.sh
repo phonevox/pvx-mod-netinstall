@@ -104,8 +104,15 @@ netinstall::run_issabel5() {
 
 netinstall::_issabel5_prepare_system() {
   log::info 'netinstall issabel5: preparando o sistema (SELinux, grupo/usuário asterisk)...'
-  run -- setenforce 0
-  srun -- sed -i 's/\(^SELINUX=\).*/SELINUX=disabled/' /etc/selinux/config
+  local selinux_state
+  selinux_state=$(os::selinux_state)
+  log::debug 'netinstall issabel5: selinux_state=%s' "$selinux_state"
+  if [[ $selinux_state != disabled ]]; then
+    run --timeout 10 -- setenforce 0
+  fi
+  if [[ -f /etc/selinux/config ]]; then
+    srun -- sed -i 's/\(^SELINUX=\).*/SELINUX=disabled/' /etc/selinux/config
+  fi
   run -- /usr/sbin/groupadd -f -r asterisk
   if ! grep -q '^asterisk:' /etc/passwd 2>/dev/null; then
     srun -- /usr/sbin/useradd -r -g asterisk -c 'Asterisk PBX' -s /bin/bash -d /var/lib/asterisk asterisk
