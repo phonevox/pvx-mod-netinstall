@@ -41,18 +41,22 @@ netinstall::preflight() {
     exit "$PVX_EXIT_UNAVAILABLE"
   fi
   local probe_rc=0
-  curl -fsS --connect-timeout 5 --max-time 8 -o /dev/null "$NETINSTALL_MIRROR_PROBE_URL" 2>/dev/null || probe_rc=$?
+  # --connect-timeout 10 (não 5) e --retry 2: achado de verdade numa VPS de rede lenta/instável
+  # onde esse mesmo host respondia bem a um curl sem timeout customizado (ou a um `ping`), mas
+  # dava rc=28 aqui — o timeout curto é que estava curto demais, não necessariamente firewall.
+  curl -fsS --connect-timeout 10 --max-time 15 --retry 2 --retry-delay 2 --retry-connrefused \
+    -o /dev/null "$NETINSTALL_MIRROR_PROBE_URL" 2>/dev/null || probe_rc=$?
   if ((probe_rc != 0)); then
     # dnf/yum vão bater nesse mesmo mirror via http:// mais adiante (ver config/repos*/*.repo) —
     # se a checagem falha aqui, a instalação de pacotes de verdade ia falhar do mesmo jeito lá
     # na frente, só que 15-20 minutos depois. Traduz o rc do curl pra apontar a causa provável
-    # em vez de um "confira a rede" genérico — achado numa VPS onde ping/ICMP funcionava mas a
-    # porta 80 estava bloqueada (curl rc=28, timeout de conexão).
+    # em vez de um "confira a rede" genérico — sem afirmar categoricamente "é firewall" pro
+    # rc=28, já que pode ser só rede lenta (mesmo achado acima).
     local motivo='motivo desconhecido'
     case $probe_rc in
       6) motivo='DNS não resolveu o host' ;;
       7) motivo='conexão recusada — nada escutando ou bloqueado antes de chegar no host' ;;
-      28) motivo='timeout de conexão — porta provavelmente bloqueada por firewall (ping/ICMP pode funcionar mesmo assim, é outra porta)' ;;
+      28) motivo='timeout de conexão mesmo após retry — pode ser porta bloqueada por firewall OU rede lenta/instável' ;;
       22 | 35 | 60) motivo='servidor respondeu, mas com erro HTTP/TLS' ;;
     esac
     log::error 'netinstall: não foi possível alcançar %s (curl rc=%d: %s)' \
