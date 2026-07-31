@@ -87,8 +87,13 @@ netinstall::run_issabel5() {
     exit "$PVX_EXIT_ABORTED"
   fi
 
-  netinstall::_issabel5_prepare_system
+  # add_repos ANTES de prepare_system, não depois: prepare_system instala
+  # issabel-config_helpers, um pacote que só existe no repo do Issabel — instalar antes do
+  # repo existir faz o dnf procurar em repositórios que nunca vão ter esse pacote (parece
+  # travado: nenhuma saída aparece até o dnf desistir, já que run/srun só mostram a saída
+  # depois que o comando termina). Ordem trocada, igual o script legado sempre fez.
   netinstall::_issabel5_add_repos
+  netinstall::_issabel5_prepare_system
   netinstall::_issabel5_install_packages "$astver" "${addpkgs[@]}"
   netinstall::_issabel5_post_install
   netinstall::_issabel5_control_panel
@@ -108,13 +113,22 @@ netinstall::_issabel5_prepare_system() {
   # sem run/srun aqui de propósito: os::pkg_install já é run-aware por dentro (chama `run --
   # "$mgr" install -y ...`); envolver de novo só esconderia o dnf/yum real atrás de uma linha
   # de dry-run genérica ("$ os::pkg_install ...") em vez do comando de verdade.
+  #
+  # log::info ANTES de cada instalação individual, de propósito: run/srun só mostram a saída
+  # do dnf DEPOIS que ele termina (não streaming em tempo real, ver comentário em
+  # lib/exec.sh:exec::_run_impl) — sem um aviso prévio, um dnf lento (rede ruim, metadata
+  # grande) fica minutos sem imprimir nada, parecendo travado. Achado de verdade numa VPS.
+  log::info 'netinstall issabel5: instalando issabel-config_helpers...'
   os::pkg_install issabel-config_helpers
 }
 
 netinstall::_issabel5_add_repos() {
   log::info 'netinstall issabel5: adicionando repositórios (epel, tmux/htop, Issabel 5)...'
+  log::info 'netinstall issabel5: instalando epel-release...'
   os::pkg_install epel-release
+  log::info 'netinstall issabel5: atualizando metadata dos repositórios (dnf makecache)...'
   srun -- dnf makecache
+  log::info 'netinstall issabel5: instalando htop e tmux...'
   os::pkg_install htop tmux
   run -- bash -c "echo 'net.ipv6.conf.all.disable_ipv6 = 1' >> /etc/sysctl.conf && sysctl -p"
 
