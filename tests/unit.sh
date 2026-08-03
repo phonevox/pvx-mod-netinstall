@@ -215,6 +215,13 @@ else
   printf '  FALHOU - _prepare_system chamou setenforce mesmo já disabled (sempre falha com rc=1 nesse caso)\n' >&2
   _FAIL=$((_FAIL + 1))
 fi
+if [[ $post_out != *extensions_custom.conf.sample* ]]; then
+  printf '  ok - _post_install pula o mv de extensions_custom.conf.sample quando o arquivo não existe (idempotente)\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - _post_install tentou mv de extensions_custom.conf.sample sem checar se existe: [%s]\n' "$post_out" >&2
+  _FAIL=$((_FAIL + 1))
+fi
 if [[ $post_out != *setenforce* ]]; then
   printf '  ok - _post_install não repete a desabilitação de SELinux (já feita em prepare_system)\n'
   _PASS=$((_PASS + 1))

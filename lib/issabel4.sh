@@ -204,9 +204,11 @@ netinstall::_issabel4_post_install() {
 
   run -- mysql --defaults-extra-file="$defaults_file" -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('')"
 
-  run -- bash -c "echo 'noload => cdr_mysql.so' >> /etc/asterisk/modules_additional.conf"
+  run -- bash -c "grep -qxF 'noload => cdr_mysql.so' /etc/asterisk/modules_additional.conf 2>/dev/null || echo 'noload => cdr_mysql.so' >> /etc/asterisk/modules_additional.conf"
   srun -- mkdir --parents /var/log/asterisk/cdr-csv
-  run -- mv -f /etc/asterisk/extensions_custom.conf.sample /etc/asterisk/extensions_custom.conf
+  if [[ -f /etc/asterisk/extensions_custom.conf.sample ]]; then
+    run -- mv -f /etc/asterisk/extensions_custom.conf.sample /etc/asterisk/extensions_custom.conf
+  fi
   srun -- /usr/sbin/amportal chown
 
   local files_dir="$PVX_MODULE_DIR/config/files4"
