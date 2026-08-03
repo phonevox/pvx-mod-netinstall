@@ -24,19 +24,33 @@ pvx modules install git@github.com:phonevox/pvx-mod-netinstall.git
 
 ## Uso
 
+**`issabel5` tem dois modos.** Por padrão (`pvx netinstall issabel5`, sem flag nenhuma), baixa
+e executa o instalador RAW original (`github.com/phonevox/pissabel5`), sem nenhuma modificação
+— o mesmo wizard `dialog` de sempre, sem flags/upfront do pvx. Isso é temporário: o fluxo
+próprio do pvx (abaixo) tem problemas de resolução de pacote em algumas VPS (`issabel-framework`
+dependendo de `php-imap`/`php-mcrypt` que não existem em certos mirrors) ainda sendo
+investigados — enquanto isso não é resolvido, o raw é o caminho comprovado. O código do fluxo
+pvx continua todo aí, disponível via `--custom`:
+
 ```sh
-pvx netinstall issabel5 --astver 18
+pvx netinstall issabel5                    # padrão: baixa e roda o instalador raw (dialog)
+pvx netinstall issabel5 --custom --astver 18
 pvx netinstall issabel4 --astver 16 --addpkgs licensed --addpkgs community-blocklist \
   --sql-password-file /root/.netinstall-sql --web-password-file /root/.netinstall-web
 pvx            # menu interativo: netinstall > issabel5/issabel4
 ```
 
-Rode `pvx netinstall issabel5 --help` / `pvx netinstall issabel4 --help` pra ver todas as
-flags (senha, timezone, idioma, `--no-tmux`, `--no-reboot`, `--force`, `--dry-run`, `--yes`).
+`issabel4` não tem os dois modos — só o fluxo pvx de sempre (é o legado que já era orientado a
+flags, sem `dialog`).
+
+Rode `pvx netinstall issabel5 --custom --help` / `pvx netinstall issabel4 --help` pra ver
+todas as flags do fluxo pvx (senha, timezone, idioma, `--no-tmux`, `--no-reboot`, `--force`,
+`--dry-run`, `--yes`). O modo raw do issabel5 não aceita flag nenhuma (é 100% interativo).
 
 **Atenção**: desativa SELinux/firewalld e reinicia o servidor ao final. Só rode contra uma
-máquina descartável/recém-provisionada — o módulo se recusa a rodar se já detectar um
-Issabel/Asterisk instalado, a menos que `--force` seja passado.
+máquina descartável/recém-provisionada — o fluxo `--custom` se recusa a rodar se já detectar
+um Issabel/Asterisk instalado, a menos que `--force` seja passado (o modo raw não tem essa
+checagem — é o script legado original).
 
 ## Escopo desta versão
 

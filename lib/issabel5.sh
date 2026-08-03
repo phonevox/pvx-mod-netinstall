@@ -3,6 +3,12 @@
 # Usa lib/tui.sh em vez de `dialog`, e run/srun/os::pkg_install/exec::mysql_defaults_file em vez
 # de yum/sed/mysql crus. Não inclui a camada de customizações Phonevox do issabel4 (tema,
 # avaliação, firewall etc.) — o issabel5 legado nunca teve essas, só control_panel + timezone.
+#
+# `pvx netinstall issabel5` roda o instalador RAW (github.com/phonevox/pissabel5) por padrão —
+# o port pvx (tudo abaixo, ver netinstall::_issabel5_custom) fica disponível via --custom, mas
+# não é mais o padrão enquanto problemas de resolução de pacote nele (issabel-framework
+# dependendo de php-imap/php-mcrypt indisponíveis em certas VPS) não são resolvidos. Ver
+# netinstall::_issabel5_raw pro dispatch.
 
 netinstall::_issabel5_addpkgs_help() {
   cat <<'EOF'
@@ -31,13 +37,88 @@ netinstall::_issabel5_resolve_addpkgs() {
   done
 }
 
+# netinstall::run_issabel5 "$@" — despacha ANTES de qualquer flag::parse "de verdade" entre os
+# dois fluxos possíveis (mesmo padrão de netinstall::ensure_tmux, que já varre argv cru pelo
+# mesmo motivo): por padrão, roda o instalador RAW do issabel5 (issabel5-netinstall.sh do
+# github.com/phonevox/pissabel5, sem modificação nenhuma — literalmente baixa e executa); com
+# `--custom`, roda o fluxo próprio do pvx (flags, tui, resumo, etc. — o que era o comportamento
+# padrão até aqui). Não é remoção de código: o fluxo custom continua inteiro, só deixou de ser
+# o padrão enquanto os problemas de resolução de pacote dele (issabel-framework/php-imap etc.)
+# não são resolvidos — o raw é o caminho comprovado que já funciona hoje.
 netinstall::run_issabel5() {
+  local a custom=0 help=0
+  for a in "$@"; do
+    case $a in
+      --custom) custom=1 ;;
+      -h | --help) help=1 ;;
+    esac
+  done
+
+  if (( help && ! custom )); then
+    # sem --custom junto: mostra só o uso mínimo do modo raw (ele não aceita flag nenhuma, é
+    # literalmente o script legado); com --custom, deixa cair pro flag::parse abaixo, que já
+    # imprime o --help completo do fluxo pvx.
+    cat <<'EOF'
+uso: pvx netinstall issabel5 [--custom]
+
+sem --custom (padrão): baixa e executa o instalador raw do Issabel 5
+(github.com/phonevox/pissabel5), sem nenhuma modificação — o mesmo wizard interativo (dialog)
+de sempre, sem flags/upfront do pvx.
+
+--custom: usa o fluxo próprio do pvx (flags, prompts, resumo antes de confirmar, etc.) — ver
+--help desse modo pra lista completa de flags.
+EOF
+    return 0
+  fi
+
+  if (( ! custom )); then
+    netinstall::_issabel5_raw "$@"
+    return $?
+  fi
+
+  netinstall::_issabel5_custom "$@"
+}
+
+# netinstall::_issabel5_raw "$@" — baixa (git clone/pull, raso) o instalador legado do
+# github.com/phonevox/pissabel5 pro state dir do módulo e o EXECUTA sem nenhuma modificação —
+# nenhuma flag do pvx é repassada pra ele (o script não entende nenhuma, é 100% dialog
+# interativo). Reusa preflight/ensure_tmux (as mesmas checagens de root/rede/tmux de sempre)
+# antes de entregar o controle: falhar rápido aqui é melhor que deixar o script legado
+# descobrir sozinho, 20 minutos depois, que não tinha rede.
+netinstall::_issabel5_raw() {
+  netinstall::ensure_tmux issabel5 "$@"
+  netinstall::preflight issabel5
+
+  exec::require_cmd git || exit "$PVX_EXIT_UNAVAILABLE"
+
+  local repo_dir="${PVX_MODULE_STATE_DIR:?PVX_MODULE_STATE_DIR não definido}/pissabel5-raw"
+  if [[ -d "$repo_dir/.git" ]]; then
+    log::info 'netinstall issabel5: atualizando o instalador raw (%s)...' "$repo_dir"
+    srun --cwd "$repo_dir" -- git pull --ff-only
+  else
+    rm -rf "$repo_dir"
+    log::info 'netinstall issabel5: baixando o instalador raw (github.com/phonevox/pissabel5)...'
+    srun -- git clone --depth 1 https://github.com/phonevox/pissabel5.git "$repo_dir"
+  fi
+
+  if [[ ! -r "$repo_dir/issabel5-netinstall.sh" ]]; then
+    log::error 'netinstall issabel5: issabel5-netinstall.sh não encontrado em %s — clone/pull falhou?' "$repo_dir"
+    exit "$PVX_EXIT_UNAVAILABLE"
+  fi
+  srun -- chmod +x "$repo_dir/issabel5-netinstall.sh"
+
+  log::info 'netinstall issabel5: entregando o controle pro instalador raw (sem flags do pvx — use --custom pro fluxo próprio)...'
+  exec bash -c 'cd "$1" && exec ./issabel5-netinstall.sh' -- "$repo_dir"
+}
+
+netinstall::_issabel5_custom() {
   netinstall::ensure_tmux issabel5 "$@"
 
   flag::reset
-  flag::set_usage 'pvx netinstall issabel5' 'Instala o Issabel 5 do zero (Rocky/CentOS/RHEL 8)'
+  flag::set_usage 'pvx netinstall issabel5 --custom' 'Instala o Issabel 5 do zero (Rocky/CentOS/RHEL 8) via o fluxo próprio do pvx'
   flag::add_standard
   netinstall::flags_shared
+  flag::add custom --type bool --help 'usa este fluxo (obrigatório pra chegar aqui — sem ele, roda o instalador raw)'
   # SEM --default de propósito: um --default preenche flag::get antes do `[[ -z $astver ]]`
   # embaixo sequer rodar, matando pra sempre o caminho interativo (achado de verdade: o
   # seletor de Asterisk 16/18 nunca aparecia, a instalação sempre seguia direto pro Asterisk
