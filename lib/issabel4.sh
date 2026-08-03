@@ -67,7 +67,7 @@ netinstall::run_issabel4() {
   astver=$(flag::get astver '')
   if [[ -z $astver ]]; then
     if (( has_tty )); then
-      tui::select "$(tui::breadcrumb netinstall issabel4)" 'Asterisk 11' 'Asterisk 13' 'Asterisk 16' ||
+      tui::select "$(tui::breadcrumb netinstall issabel4 'Asterisk')" 'Asterisk 11' 'Asterisk 13' 'Asterisk 16' ||
         exit "$PVX_EXIT_ABORTED"
       astver=${TUI_CHOICE##* }
     else
@@ -83,7 +83,7 @@ netinstall::run_issabel4() {
     # issabel5); wanpipe e callcenter ficam desmarcados (hardware/caso específico, não algo
     # pra ligar sem saber que precisa).
     TUI_CHECKLIST_DEFAULT=(1 1 0 0)
-    tui::checklist "$(tui::breadcrumb netinstall issabel4)" \
+    tui::checklist "$(tui::breadcrumb netinstall issabel4 'Pacotes adicionais')" \
       'licensed              módulos licenciados da Rede Issabel (issabel.guru)' \
       'community-blocklist   Community Realtime Block List' \
       'wanpipe               drivers Sangoma Wanpipe' \
@@ -105,8 +105,8 @@ netinstall::run_issabel4() {
   # tudo que falta ANTES de começar" do README. Passa os valores já resolvidos adiante; QUEM
   # aplica a senha continua sendo _set_passwords, na mesma ordem de sempre.
   local sql_pw web_pw
-  sql_pw=$(netinstall::resolve_secret_or_ask sql-password "$(tui::breadcrumb netinstall issabel4 'senha MySQL')" 'Defina a senha do MySQL')
-  web_pw=$(netinstall::resolve_secret_or_ask web-password "$(tui::breadcrumb netinstall issabel4 'senha Web')" 'Defina a senha da interface Web')
+  sql_pw=$(netinstall::resolve_secret_or_ask sql-password "$(tui::breadcrumb netinstall issabel4 'MySQL')" 'Defina a senha do MySQL')
+  web_pw=$(netinstall::resolve_secret_or_ask web-password "$(tui::breadcrumb netinstall issabel4 'Web Interface')" 'Defina a senha da interface Web')
   log::add_secret "$sql_pw"
   log::add_secret "$web_pw"
 

@@ -162,7 +162,7 @@ netinstall::ensure_tmux() {
 # inteiro) e o operador tinha que apertar enter às cegas pra passar pelo prompt invisível.
 netinstall::ask_password() {
   local title=$1 label=$2
-  tui::password "$title" "$label (enter pra gerar aleatória)"
+  tui::password "$title" "$label (deixe vazio para aleatório)"
   local v=$TUI_PASSWORD
   [[ -z $v ]] && v=$(netinstall::gen_password)
   printf '%s' "$v"
@@ -198,7 +198,7 @@ netinstall::print_summary() {
   local tz lang
   tz=$(flag::get timezone 'America/Sao_Paulo')
   lang=$(flag::get lang pt_BR)
-  printf '\n%s%s%s\n' "${PVX_C[bold]:-}" "$(tui::breadcrumb netinstall "$produto" resumo)" "${PVX_C[reset]:-}" >&2
+  printf '\n%s%s%s\n' "${PVX_C[bold]:-}" "$(tui::breadcrumb netinstall "$produto" 'resumo')" "${PVX_C[reset]:-}" >&2
   printf '  Asterisk: %s\n' "$astver" >&2
   printf '  Pacotes extras: %s\n' "$addpkgs_display" >&2
   printf '  Timezone: %s\n' "$tz" >&2
@@ -242,7 +242,7 @@ netinstall::save_credentials() {
 # --yes: nunca reinicia um servidor sozinho sem ninguém ter autorizado explicitamente.
 netinstall::confirm_destructive() {
   local msg=$1
-  exec::confirm "$msg (SELinux/firewalld serão desativados e o servidor será reiniciado) [s/N]" n
+  exec::confirm "$msg [s/N]" n
 }
 
 # netinstall::install_packages <rótulo> <pacote...> — tenta a lista inteira num único `dnf

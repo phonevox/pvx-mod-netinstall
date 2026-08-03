@@ -60,7 +60,7 @@ netinstall::run_issabel5() {
   astver=$(flag::get astver '')
   if [[ -z $astver ]]; then
     if (( has_tty )); then
-      tui::select "$(tui::breadcrumb netinstall issabel5)" 'Asterisk 16' 'Asterisk 18' || exit "$PVX_EXIT_ABORTED"
+      tui::select "$(tui::breadcrumb netinstall issabel5 'Asterisk')" 'Asterisk 16' 'Asterisk 18' || exit "$PVX_EXIT_ABORTED"
       [[ $TUI_CHOICE == 'Asterisk 16' ]] && astver=16 || astver=18
     else
       log::error 'netinstall issabel5: --astver é obrigatório sem terminal interativo'
@@ -74,7 +74,7 @@ netinstall::run_issabel5() {
     # licensed e community-blocklist já vêm marcados (mesmo default do dialog legado); wanpipe
     # fica desmarcado (drivers de hardware específico, não algo pra ligar sem saber que precisa).
     TUI_CHECKLIST_DEFAULT=(1 1 0)
-    tui::checklist "$(tui::breadcrumb netinstall issabel5)" \
+    tui::checklist "$(tui::breadcrumb netinstall issabel5 'Pacotes adicionais')" \
       'licensed              módulos licenciados da Rede Issabel (issabel.guru)' \
       'community-blocklist   Community Realtime Block List (bloqueia IPs SIP ofensores conhecidos)' \
       'wanpipe               drivers Sangoma Wanpipe'
@@ -99,8 +99,8 @@ netinstall::run_issabel5() {
   # valores já resolvidos adiante; QUEM aplica a senha continua sendo _set_passwords, na mesma
   # ordem de sempre (só dá pra rodar issabel-admin-passwords depois do Issabel instalado).
   local sql_pw web_pw
-  sql_pw=$(netinstall::resolve_secret_or_ask sql-password "$(tui::breadcrumb netinstall issabel5 'senha MySQL')" 'Defina a senha do MySQL')
-  web_pw=$(netinstall::resolve_secret_or_ask web-password "$(tui::breadcrumb netinstall issabel5 'senha Web')" 'Defina a senha da interface Web')
+  sql_pw=$(netinstall::resolve_secret_or_ask sql-password "$(tui::breadcrumb netinstall issabel5 'MySQL')" 'Defina a senha do MySQL')
+  web_pw=$(netinstall::resolve_secret_or_ask web-password "$(tui::breadcrumb netinstall issabel5 'Web Interface')" 'Defina a senha da interface Web')
   log::add_secret "$sql_pw"
   log::add_secret "$web_pw"
 
