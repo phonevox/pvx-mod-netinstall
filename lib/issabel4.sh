@@ -43,7 +43,10 @@ netinstall::run_issabel4() {
   flag::set_usage 'pvx netinstall issabel4' 'Instala o Issabel 4 do zero (CentOS/RHEL-like)'
   flag::add_standard
   netinstall::flags_shared
-  flag::add astver --type enum --enum '11|13|16' --default 16 --help 'versão do Asterisk a instalar'
+  # SEM --default de propósito — mesmo achado do issabel5.sh (ver comentário lá): um --default
+  # mata pra sempre o caminho interativo, já que flag::get preenche o valor antes do
+  # `[[ -z $astver ]]` embaixo sequer rodar.
+  flag::add astver --type enum --enum '11|13|16' --short a --help 'versão do Asterisk a instalar (pergunta interativamente se omitida com terminal)'
   flag::add addpkgs --repeat --help "$(netinstall::_issabel4_addpkgs_help)"
   local stub
   for stub in $NETINSTALL4_STUB_FLAGS; do
@@ -182,12 +185,21 @@ netinstall::_issabel4_post_install() {
   run -- mysql --defaults-extra-file="$defaults_file" -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('iSsAbEl.2o17')" 2>/dev/null ||
     run -- mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('iSsAbEl.2o17')"
 
-  srun -- cp -a /etc/sysconfig/iptables "/etc/sysconfig/iptables.org-issabel-$(date +%Y-%m-%d-%H-%M-%S)"
   srun -- systemctl enable httpd
-  srun -- systemctl disable firewalld
-  srun -- systemctl stop firewalld
-  run -- firewall-cmd --zone=public --add-port=443/tcp --permanent
-  run -- firewall-cmd --reload
+
+  # firewalld é OPCIONAL aqui, não requisito — mesmo achado de issabel5.sh (ver comentário lá):
+  # várias imagens de VPS/cloud pra Rocky Linux não vêm com firewalld instalado.
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if [[ -f /etc/sysconfig/iptables ]]; then
+      run -- cp -a /etc/sysconfig/iptables "/etc/sysconfig/iptables.org-issabel-$(date +%Y-%m-%d-%H-%M-%S)"
+    fi
+    run -- systemctl disable firewalld
+    run -- systemctl stop firewalld
+    run -- firewall-cmd --zone=public --add-port=443/tcp --permanent
+    run -- firewall-cmd --reload
+  else
+    log::debug 'netinstall issabel4: firewalld não está instalado — pulando (nada a desativar)'
+  fi
   run -- rm -f /etc/issabel.conf
 
   run -- mysql --defaults-extra-file="$defaults_file" -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('')"

@@ -38,7 +38,13 @@ netinstall::run_issabel5() {
   flag::set_usage 'pvx netinstall issabel5' 'Instala o Issabel 5 do zero (Rocky/CentOS/RHEL 8)'
   flag::add_standard
   netinstall::flags_shared
-  flag::add astver --type enum --enum '16|18' --default 18 --help 'versão do Asterisk a instalar'
+  # SEM --default de propósito: um --default preenche flag::get antes do `[[ -z $astver ]]`
+  # embaixo sequer rodar, matando pra sempre o caminho interativo (achado de verdade: o
+  # seletor de Asterisk 16/18 nunca aparecia, a instalação sempre seguia direto pro Asterisk
+  # 18 em silêncio, mesmo sem --astver — o "default" da flag já resolvia tudo antes de chegar
+  # no `if [[ -z $astver ]]`). Sem terminal E sem --astver, cai no erro claro logo abaixo, que
+  # é o comportamento documentado no README (não um valor mudo escolhido por baixo dos panos).
+  flag::add astver --type enum --enum '16|18' --short a --help 'versão do Asterisk a instalar (pergunta interativamente se omitida com terminal)'
   flag::add addpkgs --repeat --help "$(netinstall::_issabel5_addpkgs_help)"
   flag::parse "$@" || return $?
 
@@ -186,12 +192,26 @@ netinstall::_issabel5_post_install() {
   run -- mysql --defaults-extra-file="$defaults_file" -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('iSsAbEl.2o17')" 2>/dev/null ||
     run -- mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('iSsAbEl.2o17')"
 
-  srun -- cp -a /etc/sysconfig/iptables "/etc/sysconfig/iptables.org-issabel-$(date +%Y-%m-%d-%H-%M-%S)"
   srun -- systemctl enable httpd
-  srun -- systemctl disable firewalld
-  srun -- systemctl stop firewalld
-  run -- firewall-cmd --zone=public --add-port=443/tcp --permanent
-  run -- firewall-cmd --reload
+
+  # firewalld é OPCIONAL aqui, não requisito: várias imagens de VPS/cloud pra Rocky Linux não
+  # vêm com firewalld instalado (iptables cru, nftables direto, firewall só na borda, etc.).
+  # Achado de verdade: `srun -- systemctl disable firewalld` (fatal) abortava a instalação
+  # inteira no meio do pós-processamento só porque firewalld.service nem existia na máquina —
+  # detecta a presença ANTES de mexer, em vez de tentar e só depois descobrir que não tinha
+  # nada pra desativar. O backup do iptables (arquivo legado, só existe com iptables-services)
+  # tem a mesma checagem, pelo mesmo motivo.
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if [[ -f /etc/sysconfig/iptables ]]; then
+      run -- cp -a /etc/sysconfig/iptables "/etc/sysconfig/iptables.org-issabel-$(date +%Y-%m-%d-%H-%M-%S)"
+    fi
+    run -- systemctl disable firewalld
+    run -- systemctl stop firewalld
+    run -- firewall-cmd --zone=public --add-port=443/tcp --permanent
+    run -- firewall-cmd --reload
+  else
+    log::debug 'netinstall issabel5: firewalld não está instalado — pulando (nada a desativar)'
+  fi
   run -- rm -f /etc/issabel.conf
 
   run -- mysql --defaults-extra-file="$defaults_file" -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('')"

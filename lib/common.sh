@@ -144,10 +144,21 @@ netinstall::ensure_tmux() {
 # SEMPRE, mesmo com terminal de verdade (achado rodando de verdade: a pergunta nunca
 # disparava, sempre gerava senha aleatória mesmo digitando algo). stdin não é tocado pelo
 # $(...), então "-t 0" continua refletindo o terminal real do processo inteiro.
+#
+# NUNCA `read -p ... 2>/dev/null` na mesma chamada — mesmo achado já documentado em
+# exec::confirm (lib/exec.sh): o bash escreve o texto de `-p` em STDERR, e um `2>/dev/null`
+# ali junto apaga o prompt inteiro, não só erros de verdade. Achado de novo rodando contra a
+# VPS: a pergunta de senha nunca aparecia (parecia que só o "Prosseguir com a instalação?"
+# pedia confirmação) e era preciso apertar enter APROVEITANDO ÀS CEGAS pra passar por cada
+# prompt invisível (um pro sql-password, um pro web-password) antes da confirmação de verdade
+# aparecer — exatamente o "precisa apertar enter 3x" relatado. Corrigido imprimindo o prompt
+# separado (sempre em stderr, nunca stdout — senão contaminaria o valor capturado pelo `$(...)`
+# do chamador) e só then lendo, sem prompt nenhum pendurado no `read` que tem o `2>/dev/null`.
 netinstall::ask_password() {
   local label=$1 v=''
   if [[ -t 0 ]]; then
-    read -rsp "$label (enter pra gerar aleatória): " v </dev/tty 2>/dev/null || v=''
+    printf '%s (enter pra gerar aleatória): ' "$label" >&2
+    IFS= read -rs v </dev/tty 2>/dev/null || v=''
     printf '\n' >&2
   fi
   [[ -z $v ]] && v=$(netinstall::gen_password)

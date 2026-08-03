@@ -73,6 +73,36 @@ assert_eq 'issabel4: callcenter+licensed resolve pros pacotes reais (um por linh
     issabel-packet_capture issabel-upnpc issabel-two_factor_auth issabel-theme_designer issabel-network-agent)" \
   "$out"
 
+# --- regressão: --astver NÃO pode ter --default, senão o seletor interativo nunca dispara -----
+# Achado de verdade: `flag::get astver ''` devolve o --default configurado na declaração da
+# flag ANTES de olhar pro fallback ('') — um `--default 18` fazia `flag::get` sempre devolver
+# "18", fazendo `[[ -z $astver ]]` (em run_issabel5/run_issabel4) nunca ser verdadeiro, matando
+# pra sempre o `tui::select` de Asterisk 16/18, mesmo sem --astver na linha de comando. Testa
+# a MESMA declaração usada em issabel5.sh (enum, --short a, sem --default).
+flag::reset
+flag::add_standard
+netinstall::flags_shared
+flag::add astver --type enum --enum '16|18' --short a --help 'versão do Asterisk a instalar'
+flag::parse >/dev/null 2>&1
+assert_eq 'astver sem --default: flag::get devolve vazio quando --astver não foi passado (permite perguntar)' \
+  '' "$(flag::get astver '')"
+
+flag::reset
+flag::add_standard
+netinstall::flags_shared
+flag::add astver --type enum --enum '16|18' --short a --help 'versão do Asterisk a instalar'
+flag::parse --astver 18 >/dev/null 2>&1
+assert_eq 'astver: --astver 18 explícito continua funcionando normalmente' \
+  '18' "$(flag::get astver '')"
+
+flag::reset
+flag::add_standard
+netinstall::flags_shared
+flag::add astver --type enum --enum '16|18' --short a --help 'versão do Asterisk a instalar'
+flag::parse -a 18 >/dev/null 2>&1
+assert_eq 'astver: -a (short) funciona igual --astver' \
+  '18' "$(flag::get astver '')"
+
 # --- substituição do placeholder $ASTVER -----------------------------------------------------
 tmp_list=$(pvx::tmpdir)/pkgs.txt
 printf 'asterisk$ASTVER\nasterisk$ASTVER-devel\nhttpd\n' >"$tmp_list"
@@ -142,6 +172,21 @@ if [[ $pw1 != "$pw2" ]]; then
   _PASS=$((_PASS + 1))
 else
   printf '  FALHOU - duas chamadas de gen_password devolveram a mesma senha: [%s]\n' "$pw1" >&2
+  _FAIL=$((_FAIL + 1))
+fi
+
+# --- ask_password: sem TTY (caso deste próprio runner de testes) nunca trava, sempre devolve ---
+# --- algo pronto pra uso, e nunca escreve o valor gerado em stdout misturado com o prompt ------
+# NOTA: isto NÃO cobre o bug real corrigido (prompt de `read -p ... 2>/dev/null` sendo engolido
+# em stderr) — aquele só se manifesta com um /dev/tty de verdade, que este ambiente de teste não
+# tem (nem o sandbox do Claude tem: "/dev/tty: Device not configured"). Precisa ser conferido
+# manualmente no container/VPS real (ver README.md).
+ask_pw_out=$(netinstall::ask_password 'senha de teste' </dev/null 2>/dev/null)
+if [[ -n $ask_pw_out && ${#ask_pw_out} -ge 16 ]]; then
+  printf '  ok - ask_password sem TTY devolve uma senha gerada, não trava\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - ask_password sem TTY deveria devolver uma senha gerada: [%s]\n' "$ask_pw_out" >&2
   _FAIL=$((_FAIL + 1))
 fi
 
