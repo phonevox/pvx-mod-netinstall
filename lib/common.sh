@@ -45,26 +45,16 @@ netinstall::preflight() {
       "$(os::pretty)"
   fi
 
-  # Achado de verdade numa VPS pequena: um `dnf install` com dezenas de pacotes de uma vez só
-  # (LAMP completo + Asterisk + langpacks) pode inflar a memória do resolvedor de dependências
-  # o bastante pra derrubar o processo inteiro via OOM-killer — dnf E o pvx junto, sem log
-  # nenhum sobrando (o comando aparece em --debug, e depois nada: nem stdout, nem "-> rc=",
-  # nem "comando falhou", só o prompt do shell de volta). netinstall::install_packages já
-  # instala um pacote por vez por causa disso (ver mais abaixo), mas isso só reduz o risco —
-  # não zera. Avisa aqui com a máquina ainda intacta, não depois de já ter mexido em
-  # SELinux/repositórios.
+  # Só avisa (não bloqueia, não pede --force): RAM+swap baixa é um risco real pra instalação de
+  # LAMP+Asterisk completos, mas não é o suficiente pra travar quem sabe o que está fazendo —
+  # e o operador já vê o resto do processo (spinner + "comando falhou" de verdade agora, ver
+  # lib/exec.sh) se algo realmente der errado no meio do caminho.
   local mem_total_kb
   mem_total_kb=$(netinstall::_mem_total_kb)
   if ((mem_total_kb > 0 && mem_total_kb < NETINSTALL_MIN_MEM_KB)); then
-    log::warn 'netinstall %s: RAM+swap total é de só %d MB (recomendado >= %d MB) — risco real de o dnf ser morto pelo OOM-killer no meio da instalação, sem aviso nenhum' \
+    log::warn 'netinstall %s: RAM+swap total é de só %d MB (recomendado >= %d MB) — pacotes grandes (Asterisk, MariaDB, scriptlets de RPM) podem ficar lentos ou arriscar OOM' \
       "$produto" "$((mem_total_kb / 1024))" "$((NETINSTALL_MIN_MEM_KB / 1024))"
-    log::hint 'crie um swapfile antes de continuar: fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile'
-    if (( ! NETINSTALL_FORCE )); then
-      log::error 'netinstall %s: recusando continuar com RAM+swap insuficiente' "$produto"
-      log::hint 'use --force se tem certeza que quer arriscar mesmo assim'
-      exit "$PVX_EXIT_PRECONDITION"
-    fi
-    log::warn 'netinstall %s: continuando com RAM+swap insuficiente por causa de --force' "$produto"
+    log::hint 'se notar lentidão/travamento, considere um swapfile: fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile'
   fi
 
   local existing_issabel existing_asterisk
@@ -221,39 +211,32 @@ netinstall::confirm_destructive() {
   exec::confirm "$msg (SELinux/firewalld serão desativados e o servidor será reiniciado) [s/N]" n
 }
 
-# netinstall::install_packages <rótulo> <pacote...> — um `dnf install` POR PACOTE, igual ao
-# loop do yum_gauge do legado (learning-materials/pissabel5/issabel5-netinstall.sh) — não um
-# único `dnf install pkg1 pkg2 ... pkgN` gigante. Achado de verdade: pedir dezenas de pacotes
-# de uma vez (LAMP completo + Asterisk + langpacks) faz o resolvedor de dependências (libsolv)
-# considerar um grafo bem maior de uma só vez, e numa VPS pequena isso é o bastante pra
-# estourar RAM e levar o OOM-killer a matar o processo inteiro — sem log nenhum sobrando (ver
-# netinstall::preflight logo acima, mesmo achado). Indo um pacote por vez: (1) cada transação
-# é trivial pro solver, dificilmente soma RAM o bastante pra matar algo; (2) se ainda assim
-# travar, o log já mostra exatamente "[N/M] pacote" e tudo ANTES daquele já foi instalado de
-# verdade — não perde a instalação inteira por causa de um pacote só. Continua a lista mesmo
-# se um pacote individual falhar (rc != 0 já vira "comando falhou" via run(), dentro de
-# os::pkg_install) — reporta o resumo dos que falharam no final, em vez de abortar os
-# restantes por causa de um nome de pacote ruim (igual ao legado, que gravava em
-# netinstall_errors.txt e seguia em frente).
+# netinstall::install_packages <rótulo> <pacote...> — um único `dnf install` pra lista inteira
+# (não um pacote por vez): dnf paga o custo de carregar o metadata/sack dos repos (repos do
+# Rocky sozinhos já passam de 100MB) UMA vez só, não uma vez por pacote — pedir isso pacote a
+# pacote (tentativa anterior desta correção) multiplicava esse custo pelo tamanho da lista e
+# deixava a instalação bem mais lenta, sem ganho real agora que o motivo original (abaixo) foi
+# corrigido na raiz.
+#
+# Achado de verdade: o "kickout" silencioso original (processo sumia sem erro nenhum, mesmo
+# com --debug) NÃO era do tamanho da transação — era `run()` (lib/exec.sh) rodando um comando
+# solto (`cmd; rc=$?`) dentro de um script inteiro sob `set -e` (bin/pvx): a falha do dnf
+# disparava o errexit ANTES até de logar "comando falhou", matando o pvx inteiro sem deixar
+# rastro. Corrigido na raiz em lib/exec.sh (todo `run`/`srun`/`qrun` agora captura o rc sem
+# disparar o -e) — mas essa função ainda chama os::pkg_install de forma protegida (`if !`) de
+# propósito: instalação de pacote base falhando é grave o bastante pra merecer abortar a
+# instalação inteira com uma mensagem clara, não silenciosamente seguir em frente como se nada
+# tivesse acontecido.
 netinstall::install_packages() {
   local label=$1
   shift
   local -a pkgs=("$@")
-  local total=${#pkgs[@]}
-  ((total == 0)) && return 0
-  log::info 'netinstall: instalando %s (%d pacotes, um por vez)...' "$label" "$total"
-  local -a failed=()
-  local i=0 pkg
-  for pkg in "${pkgs[@]}"; do
-    i=$((i + 1))
-    log::info 'netinstall: [%d/%d] %s...' "$i" "$total" "$pkg"
-    os::pkg_install "$pkg" || failed+=("$pkg")
-  done
-  if ((${#failed[@]})); then
-    log::warn 'netinstall: %d de %d pacotes de "%s" falharam: %s' \
-      "${#failed[@]}" "$total" "$label" "${failed[*]}"
+  ((${#pkgs[@]} == 0)) && return 0
+  log::info 'netinstall: instalando %s (%d pacotes)...' "$label" "${#pkgs[@]}"
+  if ! os::pkg_install "${pkgs[@]}"; then
+    log::error 'netinstall: falha instalando %s — abortando (ver "comando falhou" acima pro motivo real)' "$label"
+    exit "$PVX_EXIT_FAILURE"
   fi
-  return 0
 }
 
 # netinstall::flags_shared — flags comuns a `issabel4`/`issabel5`. Cada produto ainda declara
@@ -275,7 +258,7 @@ netinstall::flags_shared() {
   # chamado tmux", que não existiria, e falharia como opção desconhecida).
   flag::add tmux --type bool --default 1 --help 'usa uma sessão tmux persistente (desligue com --no-tmux)'
   flag::add reboot --type bool --default 1 --help 'reinicia o servidor ao final (desligue com --no-reboot)'
-  flag::add force --type bool --help 'ignora as checagens de "já parece instalado" e RAM+swap insuficiente'
+  flag::add force --type bool --help 'ignora a checagem de "já parece instalado"'
   flag::add_secret sql-password --prompt 'senha root do MySQL desta instalação'
   flag::add_secret web-password --prompt 'senha admin da interface Web do Issabel'
 }

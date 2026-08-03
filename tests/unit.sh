@@ -93,42 +93,39 @@ assert_eq '_mem_total_kb soma MemTotal + SwapTotal (KB)' \
 assert_eq '_mem_total_kb devolve 0 se o arquivo não existir (nunca bloqueia por um sinal que não existe)' \
   '0' "$(netinstall::_mem_total_kb "$(pvx::tmpdir)/nao-existe-meminfo")"
 
-# --- install_packages: um dnf por pacote (não um só `dnf install pkg1 pkg2...pkgN`), resume ---
-# --- falha no final sem abortar os outros -----------------------------------------------------
-# Grava as chamadas num arquivo, não num array: `out=$(...)` roda install_packages numa
-# subshell, e mutações de array feitas ali dentro (via os::pkg_install) não voltam pro shell
-# principal — um arquivo sobrevive à subshell.
+# --- install_packages: um único dnf install pra lista inteira (não um por pacote — mais lento ---
+# --- sem ganho real, ver comentário na função), aborta com mensagem clara se falhar ------------
+# Grava a chamada num arquivo, não num array: `out=$(...)` roda install_packages numa subshell,
+# e mutações de array feitas ali dentro (via os::pkg_install) não voltam pro shell principal —
+# um arquivo sobrevive à subshell.
 install_calls_file=$(pvx::tmpdir)/install-calls.txt
 : >"$install_calls_file"
 os::pkg_install() {
-  printf '%s\n' "$1" >>"$install_calls_file"
-  [[ $1 == breaks ]] && return 1
+  printf '%s\n' "$*" >>"$install_calls_file"
   return 0
 }
-out=$(netinstall::install_packages 'grupo teste' pkg-a breaks pkg-c 2>&1)
+out=$(netinstall::install_packages 'grupo ok' pkg-a pkg-b pkg-c 2>&1)
 unset -f os::pkg_install
 
-assert_eq 'install_packages: chama os::pkg_install um pacote por vez, na ordem recebida' \
-  "$(printf '%s\n' pkg-a breaks pkg-c)" "$(cat "$install_calls_file")"
-
-if [[ $out == *'[1/3]'*'pkg-a'* && $out == *'[2/3]'*'breaks'* && $out == *'[3/3]'*'pkg-c'* ]]; then
-  printf '  ok - install_packages loga progresso [N/M] pacote por pacote\n'
-  _PASS=$((_PASS + 1))
-else
-  printf '  FALHOU - install_packages não logou o progresso [N/M] esperado: [%s]\n' "$out" >&2
-  _FAIL=$((_FAIL + 1))
-fi
-
-if [[ $out == *'1 de 3 pacotes'*'breaks'* ]]; then
-  printf '  ok - install_packages resume a falha no final sem abortar os pacotes seguintes\n'
-  _PASS=$((_PASS + 1))
-else
-  printf '  FALHOU - install_packages deveria resumir 1 pacote falho ("breaks") no final: [%s]\n' "$out" >&2
-  _FAIL=$((_FAIL + 1))
-fi
+assert_eq 'install_packages: chama os::pkg_install UMA vez só, com a lista inteira' \
+  'pkg-a pkg-b pkg-c' "$(cat "$install_calls_file")"
 
 out_empty=$(netinstall::install_packages 'grupo vazio' 2>&1)
 assert_eq 'install_packages: lista vazia não chama nada nem loga nada' '' "$out_empty"
+
+os::pkg_install() { return 1; }
+install_rc=0
+out=$(netinstall::install_packages 'grupo que falha' pkg-x 2>&1) || install_rc=$?
+unset -f os::pkg_install
+assert_eq 'install_packages: aborta com PVX_EXIT_FAILURE quando os::pkg_install falha (não segue em frente)' \
+  "$PVX_EXIT_FAILURE" "$install_rc"
+if [[ $out == *abortando* ]]; then
+  printf '  ok - install_packages loga uma mensagem clara antes de abortar\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - install_packages deveria logar uma mensagem clara antes de abortar: [%s]\n' "$out" >&2
+  _FAIL=$((_FAIL + 1))
+fi
 
 # --- geração de senha --------------------------------------------------------------------------
 pw1=$(netinstall::gen_password)
