@@ -52,9 +52,9 @@ netinstall::preflight() {
   local mem_total_kb
   mem_total_kb=$(netinstall::_mem_total_kb)
   if ((mem_total_kb > 0 && mem_total_kb < NETINSTALL_MIN_MEM_KB)); then
-    log::warn 'netinstall %s: RAM+swap total é de só %d MB (recomendado >= %d MB) — pacotes grandes (Asterisk, MariaDB, scriptlets de RPM) podem ficar lentos ou arriscar OOM' \
+    log::warn 'netinstall %s: RAM+swap baixa (%d MB, recomendado >= %d MB)' \
       "$produto" "$((mem_total_kb / 1024))" "$((NETINSTALL_MIN_MEM_KB / 1024))"
-    log::hint 'se notar lentidão/travamento, considere um swapfile: fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile'
+    log::hint 'crie um swapfile: fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile'
   fi
 
   local existing_issabel existing_asterisk
@@ -222,32 +222,31 @@ netinstall::confirm_destructive() {
   exec::confirm "$msg (SELinux/firewalld serão desativados e o servidor será reiniciado) [s/N]" n
 }
 
-# netinstall::install_packages <rótulo> <pacote...> — um único `dnf install` pra lista inteira
-# (não um pacote por vez): dnf paga o custo de carregar o metadata/sack dos repos (repos do
-# Rocky sozinhos já passam de 100MB) UMA vez só, não uma vez por pacote — pedir isso pacote a
-# pacote (tentativa anterior desta correção) multiplicava esse custo pelo tamanho da lista e
-# deixava a instalação bem mais lenta, sem ganho real agora que o motivo original (abaixo) foi
-# corrigido na raiz.
-#
-# Achado de verdade: o "kickout" silencioso original (processo sumia sem erro nenhum, mesmo
-# com --debug) NÃO era do tamanho da transação — era `run()` (lib/exec.sh) rodando um comando
-# solto (`cmd; rc=$?`) dentro de um script inteiro sob `set -e` (bin/pvx): a falha do dnf
-# disparava o errexit ANTES até de logar "comando falhou", matando o pvx inteiro sem deixar
-# rastro. Corrigido na raiz em lib/exec.sh (todo `run`/`srun`/`qrun` agora captura o rc sem
-# disparar o -e) — mas essa função ainda chama os::pkg_install de forma protegida (`if !`) de
-# propósito: instalação de pacote base falhando é grave o bastante pra merecer abortar a
-# instalação inteira com uma mensagem clara, não silenciosamente seguir em frente como se nada
-# tivesse acontecido.
+# netinstall::install_packages <rótulo> <pacote...> — tenta a lista inteira num único `dnf
+# install` (rápido: paga o custo de metadata/sack dos repos uma vez só). Se a transação em
+# lote falhar — típico quando um nome de pacote não existe mais no repo (renomeado/removido
+# entre releases) — cai pra instalação pacote a pacote, pra isolar só o(s) problemático(s) em
+# vez de perder a lista inteira por causa de um nome só. Nunca aborta o processo: reporta os
+# que falharam e segue em frente, quem decide o que fazer com isso é o operador.
 netinstall::install_packages() {
   local label=$1
   shift
   local -a pkgs=("$@")
   ((${#pkgs[@]} == 0)) && return 0
   log::info 'netinstall: instalando %s (%d pacotes)...' "$label" "${#pkgs[@]}"
-  if ! os::pkg_install "${pkgs[@]}"; then
-    log::error 'netinstall: falha instalando %s — abortando (ver "comando falhou" acima pro motivo real)' "$label"
-    exit "$PVX_EXIT_FAILURE"
+  os::pkg_install "${pkgs[@]}" && return 0
+
+  log::warn 'netinstall: instalação em lote de "%s" falhou, tentando pacote por pacote' "$label"
+  local -a failed=()
+  local pkg
+  for pkg in "${pkgs[@]}"; do
+    os::pkg_install "$pkg" || failed+=("$pkg")
+  done
+  if ((${#failed[@]})); then
+    log::error 'netinstall: %d de %d pacotes de "%s" não instalados: %s' \
+      "${#failed[@]}" "${#pkgs[@]}" "$label" "${failed[*]}"
   fi
+  return 0
 }
 
 # netinstall::flags_shared — flags comuns a `issabel4`/`issabel5`. Cada produto ainda declara

@@ -123,8 +123,7 @@ assert_eq '_mem_total_kb soma MemTotal + SwapTotal (KB)' \
 assert_eq '_mem_total_kb devolve 0 se o arquivo não existir (nunca bloqueia por um sinal que não existe)' \
   '0' "$(netinstall::_mem_total_kb "$(pvx::tmpdir)/nao-existe-meminfo")"
 
-# --- install_packages: um único dnf install pra lista inteira (não um por pacote — mais lento ---
-# --- sem ganho real, ver comentário na função), aborta com mensagem clara se falhar ------------
+# --- install_packages: tenta a lista inteira num único dnf install ----------------------------
 # Grava a chamada num arquivo, não num array: `out=$(...)` roda install_packages numa subshell,
 # e mutações de array feitas ali dentro (via os::pkg_install) não voltam pro shell principal —
 # um arquivo sobrevive à subshell.
@@ -143,17 +142,31 @@ assert_eq 'install_packages: chama os::pkg_install UMA vez só, com a lista inte
 out_empty=$(netinstall::install_packages 'grupo vazio' 2>&1)
 assert_eq 'install_packages: lista vazia não chama nada nem loga nada' '' "$out_empty"
 
-os::pkg_install() { return 1; }
+# --- lote falha (ex: um nome de pacote não existe mais no repo) --> cai pra pacote a pacote, ---
+# --- isola só o problemático, NUNCA aborta o processo ------------------------------------------
+os::pkg_install() {
+  (( $# > 1 )) && return 1
+  [[ $1 == breaks ]] && return 1
+  return 0
+}
 install_rc=0
-out=$(netinstall::install_packages 'grupo que falha' pkg-x 2>&1) || install_rc=$?
+out=$(netinstall::install_packages 'grupo com 1 problema' pkg-a breaks pkg-c 2>&1) || install_rc=$?
 unset -f os::pkg_install
-assert_eq 'install_packages: aborta com PVX_EXIT_FAILURE quando os::pkg_install falha (não segue em frente)' \
-  "$PVX_EXIT_FAILURE" "$install_rc"
-if [[ $out == *abortando* ]]; then
-  printf '  ok - install_packages loga uma mensagem clara antes de abortar\n'
+
+assert_eq 'install_packages: nunca aborta o processo, mesmo com pacote(s) inexistente(s)' \
+  0 "$install_rc"
+if [[ $out == *'lote'*'falhou'* ]]; then
+  printf '  ok - install_packages avisa quando o lote falha e cai pra pacote a pacote\n'
   _PASS=$((_PASS + 1))
 else
-  printf '  FALHOU - install_packages deveria logar uma mensagem clara antes de abortar: [%s]\n' "$out" >&2
+  printf '  FALHOU - install_packages deveria avisar sobre a queda pra pacote a pacote: [%s]\n' "$out" >&2
+  _FAIL=$((_FAIL + 1))
+fi
+if [[ $out == *'1 de 3 pacotes'*'breaks'* ]]; then
+  printf '  ok - install_packages reporta exatamente qual pacote não instalou\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - install_packages deveria reportar "breaks" como o único pacote que falhou: [%s]\n' "$out" >&2
   _FAIL=$((_FAIL + 1))
 fi
 
