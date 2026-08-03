@@ -79,6 +79,10 @@ netinstall::run_issabel4() {
   if flag::has addpkgs; then
     IFS=$'\x1f' read -r -a addpkgs_keys <<<"${PVX_FLAG_MULTI[addpkgs]:-${PVX_FLAG_VALUE[addpkgs]}}"
   elif (( has_tty )); then
+    # licensed e community-blocklist já vêm marcados (mesmo default do dialog legado do
+    # issabel5); wanpipe e callcenter ficam desmarcados (hardware/caso específico, não algo
+    # pra ligar sem saber que precisa).
+    TUI_CHECKLIST_DEFAULT=(1 1 0 0)
     tui::checklist "$(tui::breadcrumb netinstall issabel4)" \
       'licensed              módulos licenciados da Rede Issabel (issabel.guru)' \
       'community-blocklist   Community Realtime Block List' \
@@ -101,12 +105,16 @@ netinstall::run_issabel4() {
   # tudo que falta ANTES de começar" do README. Passa os valores já resolvidos adiante; QUEM
   # aplica a senha continua sendo _set_passwords, na mesma ordem de sempre.
   local sql_pw web_pw
-  sql_pw=$(netinstall::resolve_secret_or_ask sql-password 'Defina a senha do MySQL')
-  web_pw=$(netinstall::resolve_secret_or_ask web-password 'Defina a senha da interface Web')
+  sql_pw=$(netinstall::resolve_secret_or_ask sql-password "$(tui::breadcrumb netinstall issabel4 'senha MySQL')" 'Defina a senha do MySQL')
+  web_pw=$(netinstall::resolve_secret_or_ask web-password "$(tui::breadcrumb netinstall issabel4 'senha Web')" 'Defina a senha da interface Web')
   log::add_secret "$sql_pw"
   log::add_secret "$web_pw"
 
-  log::info 'netinstall issabel4: Asterisk %s, pacotes extras: %s' "$astver" "${addpkgs_keys[*]:-nenhum}"
+  local addpkgs_display='nenhum'
+  if ((${#addpkgs_keys[@]})); then
+    addpkgs_display=$(IFS=', '; printf '%s' "${addpkgs_keys[*]}")
+  fi
+  netinstall::print_summary issabel4 "$astver" "$addpkgs_display"
 
   if ! netinstall::confirm_destructive 'Prosseguir com a instalação do Issabel 4?'; then
     log::error 'netinstall issabel4: cancelado (sem confirmação)'

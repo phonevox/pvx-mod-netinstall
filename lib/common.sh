@@ -113,14 +113,24 @@ netinstall::preflight() {
 # verdade", pra decidir isso sem duplicar validação de flag), não faz nada. Senão, relança a
 # própria invocação dentro de uma sessão nova e sai — sobrevive a queda de SSH sem depender do
 # operador lembrar de abrir tmux manualmente antes (era instrução manual no README do pissabel5).
+#
+# Com --debug/-v/--verbose/--trace (varrido aqui pelos mesmos tokens crus que bin/pvx reconhece,
+# ver lib/flags.sh e bin/pvx), a sessão NUNCA fecha sozinha, mesmo depois do comando terminar
+# (sucesso, erro, ou crash) — fica lá com "Pane is dead" até o próprio sysadmin encerrar (`tmux
+# kill-session -t <sessão>`). Achado de verdade: em modo debug o operador quer poder rolar pra
+# trás e ler tudo com calma; por padrão, tmux fecha a janela assim que o comando dentro dela sai,
+# derrubando a sessão (e o scrollback) antes de dar tempo de olhar. `remain-on-exit` resolve isso
+# sem precisar mudar como o comando roda (nada de exec'ar um shell novo por cima) — só cria a
+# sessão destacada, liga a opção, e só então anexa.
 netinstall::ensure_tmux() {
   local produto=$1
   shift
   [[ -n ${TMUX:-} ]] && return 0
-  local a
+  local a keep_alive=0
   for a in "$@"; do
     case $a in
       --no-tmux | -h | --help) return 0 ;;
+      -v | --verbose | --debug | --trace | --log-level=debug | --log-level=trace) keep_alive=1 ;;
     esac
   done
   if ! command -v tmux >/dev/null 2>&1; then
@@ -131,47 +141,40 @@ netinstall::ensure_tmux() {
   local session="pvx-netinstall-$produto"
   log::info 'netinstall: iniciando dentro de uma sessão tmux (%s); use --no-tmux pra desligar isso' \
     "$session"
+  if (( keep_alive )); then
+    log::info 'netinstall: modo debug/verbose — a sessão tmux (%s) não fecha sozinha; encerre com "tmux kill-session -t %s" quando terminar' \
+      "$session" "$session"
+    exec tmux new-session -d -s "$session" -- "$0" "$produto" "$@" \; \
+      set-option -t "$session" remain-on-exit on \; \
+      attach-session -t "$session"
+  fi
   exec tmux new-session -s "$session" -- "$0" "$produto" "$@"
 }
 
-# netinstall::ask_password <rótulo> — prompt mascarado (sem eco, igual a um `sudo`); enter
-# vazio (ou sem TTY nenhum) gera uma senha aleatória em vez de aceitar "" como senha de
-# verdade — nunca trava esperando teclado fora de terminal interativo.
-#
-# Só checa "-t 0" (stdin), NUNCA "-t 1" (stdout): esta função é sempre chamada via
-# `v=$(netinstall::ask_password ...)` pra capturar o valor — e a própria substituição de
-# comando redireciona o stdout do que está dentro pra um pipe, o que faz "-t 1" dar falso
-# SEMPRE, mesmo com terminal de verdade (achado rodando de verdade: a pergunta nunca
-# disparava, sempre gerava senha aleatória mesmo digitando algo). stdin não é tocado pelo
-# $(...), então "-t 0" continua refletindo o terminal real do processo inteiro.
-#
-# NUNCA `read -p ... 2>/dev/null` na mesma chamada — mesmo achado já documentado em
-# exec::confirm (lib/exec.sh): o bash escreve o texto de `-p` em STDERR, e um `2>/dev/null`
-# ali junto apaga o prompt inteiro, não só erros de verdade. Achado de novo rodando contra a
-# VPS: a pergunta de senha nunca aparecia (parecia que só o "Prosseguir com a instalação?"
-# pedia confirmação) e era preciso apertar enter APROVEITANDO ÀS CEGAS pra passar por cada
-# prompt invisível (um pro sql-password, um pro web-password) antes da confirmação de verdade
-# aparecer — exatamente o "precisa apertar enter 3x" relatado. Corrigido imprimindo o prompt
-# separado (sempre em stderr, nunca stdout — senão contaminaria o valor capturado pelo `$(...)`
-# do chamador) e só then lendo, sem prompt nenhum pendurado no `read` que tem o `2>/dev/null`.
+# netinstall::ask_password <título> <rótulo> — prompt mascarado (sem eco, igual a um `sudo`);
+# enter vazio (ou sem TTY nenhum) gera uma senha aleatória em vez de aceitar "" como senha de
+# verdade — nunca trava esperando teclado fora de terminal interativo. A exibição em si
+# (título/breadcrumb + rótulo + leitura mascarada) é toda de tui::password (lib/tui.sh) — pra
+# ficar visualmente igual ao resto dos prompts do menu (mesmo cabeçalho de tui::select/
+# checklist), em vez de desenhar um estilo próprio aqui. Achado de verdade corrigido nessa
+# unificação: a versão antiga usava `read -rsp ... 2>/dev/null` (mesmo anti-padrão já
+# documentado em exec::confirm — o `-p` escreve em stderr, e o `2>/dev/null` engolia o prompt
+# inteiro) e o operador tinha que apertar enter às cegas pra passar pelo prompt invisível.
 netinstall::ask_password() {
-  local label=$1 v=''
-  if [[ -t 0 ]]; then
-    printf '%s (enter pra gerar aleatória): ' "$label" >&2
-    IFS= read -rs v </dev/tty 2>/dev/null || v=''
-    printf '\n' >&2
-  fi
+  local title=$1 label=$2
+  tui::password "$title" "$label (enter pra gerar aleatória)"
+  local v=$TUI_PASSWORD
   [[ -z $v ]] && v=$(netinstall::gen_password)
   printf '%s' "$v"
 }
 
-# netinstall::resolve_secret_or_ask <flag> <rótulo> — usa o valor já resolvido por
+# netinstall::resolve_secret_or_ask <flag> <título> <rótulo> — usa o valor já resolvido por
 # --<flag>/--<flag>-file/variável de ambiente se qualquer um desses foi dado (mesma prioridade
 # de flag::_resolve_secret); só cai em netinstall::ask_password se nenhum dos três veio —
 # assim a pergunta usa nosso texto (com "gera aleatória" explícito) em vez do prompt genérico
 # de lib/flags.sh, sem duplicar a lógica de resolução de --flag/--flag-file/env.
 netinstall::resolve_secret_or_ask() {
-  local long=$1 label=$2 env
+  local long=$1 title=$2 label=$3 env
   if flag::has "$long" || flag::has "$long-file"; then
     flag::get "$long"
     return 0
@@ -181,7 +184,27 @@ netinstall::resolve_secret_or_ask() {
     flag::get "$long"
     return 0
   fi
-  netinstall::ask_password "$label"
+  netinstall::ask_password "$title" "$label"
+}
+
+# netinstall::print_summary <produto> <astver> <addpkgs_display> — resumo do que foi escolhido
+# (flag ou interativo), impresso ANTES da confirmação destrutiva. Achado de verdade: um
+# "Prosseguir com a instalação?" solto, sem mostrar com o que exatamente, obriga o operador a
+# confiar de memória no que respondeu — metade das respostas (astver, addpkgs) já rolou pra
+# fora da tela ou veio só de flag, nunca visível junto. Vai pra stderr (igual ao resto dos
+# prompts do menu), não por log:: — é uma tela de revisão, não um evento de log.
+netinstall::print_summary() {
+  local produto=$1 astver=$2 addpkgs_display=$3
+  local tz lang
+  tz=$(flag::get timezone 'America/Sao_Paulo')
+  lang=$(flag::get lang pt_BR)
+  printf '\n%s%s%s\n' "${PVX_C[bold]:-}" "$(tui::breadcrumb netinstall "$produto" resumo)" "${PVX_C[reset]:-}" >&2
+  printf '  Asterisk: %s\n' "$astver" >&2
+  printf '  Pacotes extras: %s\n' "$addpkgs_display" >&2
+  printf '  Timezone: %s\n' "$tz" >&2
+  printf '  Idioma: %s\n' "$lang" >&2
+  printf '  Senhas (MySQL/Web): definidas\n' >&2
+  printf '\n' >&2
 }
 
 # netinstall::gen_password — senha aleatória por instalação (nunca um default fixo

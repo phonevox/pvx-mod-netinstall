@@ -190,11 +190,11 @@ fi
 
 # --- ask_password: sem TTY (caso deste próprio runner de testes) nunca trava, sempre devolve ---
 # --- algo pronto pra uso, e nunca escreve o valor gerado em stdout misturado com o prompt ------
-# NOTA: isto NÃO cobre o bug real corrigido (prompt de `read -p ... 2>/dev/null` sendo engolido
-# em stderr) — aquele só se manifesta com um /dev/tty de verdade, que este ambiente de teste não
-# tem (nem o sandbox do Claude tem: "/dev/tty: Device not configured"). Precisa ser conferido
-# manualmente no container/VPS real (ver README.md).
-ask_pw_out=$(netinstall::ask_password 'senha de teste' </dev/null 2>/dev/null)
+# NOTA: isto NÃO cobre a exibição de verdade (tui::password, título/breadcrumb + leitura
+# mascarada) — aquilo só se manifesta com um /dev/tty de verdade, que este ambiente de teste
+# não tem (nem o sandbox do Claude tem: "/dev/tty: Device not configured"). Precisa ser
+# conferido manualmente no container/VPS real (ver README.md).
+ask_pw_out=$(netinstall::ask_password 'breadcrumb de teste' 'senha de teste' </dev/null 2>/dev/null)
 if [[ -n $ask_pw_out && ${#ask_pw_out} -ge 16 ]]; then
   printf '  ok - ask_password sem TTY devolve uma senha gerada, não trava\n'
   _PASS=$((_PASS + 1))
