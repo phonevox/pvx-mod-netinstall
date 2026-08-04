@@ -192,11 +192,34 @@ netinstall::_issabel5_custom() {
   log::add_secret "$sql_pw"
   log::add_secret "$web_pw"
 
+  # Tweaks Phonevox (ver docs/netinstall-phonevox-tweaks-spec.md): mesma regra de "pergunta
+  # tudo antes" acima — entra depois das senhas, antes do resumo/confirmação.
+  #
+  # "$(...) || exit $?", NÃO "mapfile -t tweaks < <(...)": process substitution roda a função
+  # numa subshell assíncrona — um `exit` de dentro dela (ex: --tweaks com chave desconhecida)
+  # só mata a subshell, nunca o processo principal, e o `mapfile` nem percebe (lê stdout vazio
+  # e segue como se nada tivesse acontecido). Achado de verdade: com `< <(...)`, `--tweaks
+  # bicho-que-nao-existe` imprimia o [ERROR] e A INSTALAÇÃO INTEIRA RODAVA DO MESMO JEITO.
+  # Substituição de comando comum propaga o rc pro `||` (mesma classe de gotcha documentada
+  # pro resto do módulo, ver comentário de _issabel5_post_install/amportal).
+  local -a tweaks=()
+  local _tweaks_out
+  _tweaks_out=$(netinstall::phonevox_tweaks_menu issabel5) || exit $?
+  [[ -n $_tweaks_out ]] && mapfile -t tweaks <<<"$_tweaks_out"
+  local tweak_operator_panel=0 _tw
+  for _tw in ${tweaks[@]+"${tweaks[@]}"}; do
+    [[ $_tw == operator-panel ]] && tweak_operator_panel=1
+  done
+
   local addpkgs_display='nenhum'
   if ((${#addpkgs_keys[@]})); then
     addpkgs_display=$(IFS=', '; printf '%s' "${addpkgs_keys[*]}")
   fi
-  netinstall::print_summary issabel5 "$astver" "$addpkgs_display"
+  local tweaks_display='nenhum'
+  if ((${#tweaks[@]})); then
+    tweaks_display=$(IFS=', '; printf '%s' "${tweaks[*]}")
+  fi
+  netinstall::print_summary issabel5 "$astver" "$addpkgs_display" "$tweaks_display"
 
   if ! netinstall::confirm_destructive 'Prosseguir com a instalação do Issabel 5?'; then
     log::error 'netinstall issabel5: cancelado (sem confirmação)'
@@ -214,7 +237,11 @@ netinstall::_issabel5_custom() {
   netinstall::_issabel5_install_packages "$astver" "${addpkgs[@]}"
   netinstall::_issabel5_post_install
   netinstall::_issabel5_install_db
-  netinstall::_issabel5_control_panel
+  # gated pela tweak "operator-panel" (default ON — ver netinstall::_tweaks_catalog em
+  # lib/common.sh); antes desta tweak existir, este passo era incondicional.
+  if ((tweak_operator_panel)); then
+    netinstall::_issabel5_control_panel
+  fi
   netinstall::_issabel5_set_timezone
   netinstall::_issabel5_set_passwords "$sql_pw" "$web_pw"
   netinstall::_issabel5_finish

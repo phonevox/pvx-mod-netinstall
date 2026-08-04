@@ -118,11 +118,27 @@ netinstall::run_issabel4() {
   log::add_secret "$sql_pw"
   log::add_secret "$web_pw"
 
+  # Tweaks Phonevox (ver docs/netinstall-phonevox-tweaks-spec.md): nenhuma do catálogo se
+  # aplica a issabel4 ainda (ex.: "operator-panel" é só-issabel5) — chamado mesmo assim, pra
+  # manter o mesmo contrato/resumo dos dois produtos; hoje sempre resolve vazio aqui.
+  #
+  # "$(...) || exit $?", NÃO "mapfile -t tweaks < <(...)" — mesmo achado de verdade do
+  # issabel5.sh (ver comentário lá): process substitution esconderia um `exit` de dentro da
+  # função (chave desconhecida) numa subshell que o `mapfile` nunca chega a notar.
+  local -a tweaks=()
+  local _tweaks_out
+  _tweaks_out=$(netinstall::phonevox_tweaks_menu issabel4) || exit $?
+  [[ -n $_tweaks_out ]] && mapfile -t tweaks <<<"$_tweaks_out"
+
   local addpkgs_display='nenhum'
   if ((${#addpkgs_keys[@]})); then
     addpkgs_display=$(IFS=', '; printf '%s' "${addpkgs_keys[*]}")
   fi
-  netinstall::print_summary issabel4 "$astver" "$addpkgs_display"
+  local tweaks_display='nenhum'
+  if ((${#tweaks[@]})); then
+    tweaks_display=$(IFS=', '; printf '%s' "${tweaks[*]}")
+  fi
+  netinstall::print_summary issabel4 "$astver" "$addpkgs_display" "$tweaks_display"
 
   if ! netinstall::confirm_destructive 'Prosseguir com a instalação do Issabel 4?'; then
     log::error 'netinstall issabel4: cancelado (sem confirmação)'

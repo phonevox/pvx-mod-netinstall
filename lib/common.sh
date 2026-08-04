@@ -204,17 +204,103 @@ netinstall::resolve_secret_or_ask() {
 # fora da tela ou veio só de flag, nunca visível junto. Vai pra stderr (igual ao resto dos
 # prompts do menu), não por log:: — é uma tela de revisão, não um evento de log.
 netinstall::print_summary() {
-  local produto=$1 astver=$2 addpkgs_display=$3
+  local produto=$1 astver=$2 addpkgs_display=$3 tweaks_display=${4:-nenhum}
   local tz lang
   tz=$(flag::get timezone 'America/Sao_Paulo')
   lang=$(flag::get lang pt_BR)
   printf '\n%s%s%s\n' "${PVX_C[bold]:-}" "$(tui::breadcrumb netinstall "$produto" 'resumo')" "${PVX_C[reset]:-}" >&2
   printf '  Asterisk: %s\n' "$astver" >&2
   printf '  Pacotes extras: %s\n' "$addpkgs_display" >&2
+  printf '  Tweaks Phonevox: %s\n' "$tweaks_display" >&2
   printf '  Timezone: %s\n' "$tz" >&2
   printf '  Idioma: %s\n' "$lang" >&2
   printf '  Senhas (MySQL/Web): definidas\n' >&2
   printf '\n' >&2
+}
+
+# netinstall::_tweaks_catalog — catálogo de tweaks Phonevox conhecidos, um por linha, campos
+# separados por TAB: chave / produto(s) aplicável(is) ("all" ou lista separada por vírgula,
+# ex. "issabel5") / default 0|1 (pré-marcado na checklist e usado como fallback sem TTY/flag) /
+# rótulo exibido. Adicionar tweak novo é UMA linha aqui — ver docs/netinstall-phonevox-tweaks-spec.md.
+netinstall::_tweaks_catalog() {
+  cat <<'EOF'
+operator-panel	issabel5	1	Painel do operador (control_panel — visão de recepção/switchboard)
+EOF
+}
+
+# netinstall::phonevox_tweaks_menu <produto> — resolve as tweaks Phonevox aplicáveis a
+# <produto> (filtra o catálogo acima) e imprime as chaves escolhidas, uma por linha. Mesmo
+# contrato de flag::has/--*-file/TTY já usado pro resto do netinstall (ver
+# netinstall::flags_shared): `--tweaks <chave>` dado (repetível) manda, sem perguntar nada;
+# sem flag e com TTY, mostra a checklist (pré-marcada conforme a coluna default do catálogo);
+# sem flag e sem TTY, cai pros defaults do catálogo (NÃO "nenhum" — ao contrário de addpkgs,
+# aqui um tweak pode já ter sido comportamento padrão de sempre, ex. operator-panel; um default
+# silencioso "nenhum" seria regressão pra quem automatiza sem passar --tweaks). Produto sem
+# nenhum tweak aplicável (ex. issabel4 hoje) não mostra checklist nenhuma — só devolve vazio.
+netinstall::phonevox_tweaks_menu() {
+  local produto=$1
+  local -a keys=() labels=() defaults=()
+  local key produtos default_on label
+
+  while IFS=$'\t' read -r key produtos default_on label; do
+    [[ -z $key ]] && continue
+    if [[ $produtos != all ]]; then
+      local -a plist=()
+      local p match=0
+      IFS=',' read -r -a plist <<<"$produtos"
+      for p in "${plist[@]}"; do
+        [[ $p == "$produto" ]] && {
+          match=1
+          break
+        }
+      done
+      ((match)) || continue
+    fi
+    keys+=("$key")
+    labels+=("$label")
+    defaults+=("$default_on")
+  done < <(netinstall::_tweaks_catalog)
+
+  local -a chosen=()
+
+  if flag::has tweaks; then
+    local -a given=()
+    IFS=$'\x1f' read -r -a given <<<"${PVX_FLAG_MULTI[tweaks]:-${PVX_FLAG_VALUE[tweaks]:-}}"
+    local g i found
+    for g in ${given[@]+"${given[@]}"}; do
+      found=0
+      for ((i = 0; i < ${#keys[@]}; i++)); do
+        [[ ${keys[i]} == "$g" ]] && {
+          found=1
+          break
+        }
+      done
+      if ((!found)); then
+        log::error 'netinstall: tweak desconhecida (ou não aplicável a %s): %s' "$produto" "$g"
+        exit "$PVX_EXIT_USAGE"
+      fi
+      chosen+=("$g")
+    done
+  elif [[ -t 0 && -t 1 ]] && ((${#keys[@]})); then
+    local -a items=() item
+    local i
+    TUI_CHECKLIST_DEFAULT=()
+    for ((i = 0; i < ${#keys[@]}; i++)); do
+      items+=("$(printf '%-16s %s' "${keys[i]}" "${labels[i]}")")
+      TUI_CHECKLIST_DEFAULT+=("${defaults[i]}")
+    done
+    tui::checklist "$(tui::breadcrumb netinstall "$produto" 'Tweaks Phonevox')" "${items[@]}"
+    for item in ${TUI_RESULT[@]+"${TUI_RESULT[@]}"}; do
+      chosen+=("${item%% *}")
+    done
+  else
+    local i
+    for ((i = 0; i < ${#keys[@]}; i++)); do
+      ((defaults[i])) && chosen+=("${keys[i]}")
+    done
+  fi
+
+  printf '%s\n' ${chosen[@]+"${chosen[@]}"}
 }
 
 # netinstall::gen_password — senha aleatória por instalação (nunca um default fixo
@@ -295,6 +381,7 @@ netinstall::flags_shared() {
   flag::add lang --default pt_BR --help 'idioma do sistema/Issabel'
   flag::add timezone --default 'America/Sao_Paulo' --help 'timezone do sistema e do PHP'
   flag::add addpkgs --repeat --help 'pacote adicional a instalar (pode repetir a flag)'
+  flag::add tweaks --repeat --help 'tweak Phonevox a habilitar após a instalação (pode repetir a flag; ver --help pra lista)'
   # nomes positivos de propósito: "--no-X" já é sintaxe nativa do lib/flags.sh pra negar um
   # bool chamado "X" (flag::parse trata qualquer token "--no-*" assim) — declarar um flag
   # literalmente chamado "no-tmux" colide com isso (`--no-tmux` seria lido como "negar um flag
