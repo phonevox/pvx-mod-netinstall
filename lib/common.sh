@@ -229,28 +229,35 @@ EOF
 }
 
 # netinstall::phonevox_tweaks_menu <produto> <has_tty> — resolve as tweaks Phonevox aplicáveis
-# a <produto> (filtra o catálogo acima) e imprime as chaves escolhidas, uma por linha. Mesmo
-# contrato de flag::has/--*-file/TTY já usado pro resto do netinstall (ver
-# netinstall::flags_shared): `--tweaks <chave>` dado (repetível) manda, sem perguntar nada;
-# sem flag e com TTY, mostra a checklist (pré-marcada conforme a coluna default do catálogo);
-# sem flag e sem TTY, cai pros defaults do catálogo (NÃO "nenhum" — ao contrário de addpkgs,
-# aqui um tweak pode já ter sido comportamento padrão de sempre, ex. operator-panel; um default
-# silencioso "nenhum" seria regressão pra quem automatiza sem passar --tweaks). Produto sem
-# nenhum tweak aplicável (ex. issabel4 hoje) não mostra checklist nenhuma — só devolve vazio.
+# a <produto> (filtra o catálogo acima) e POPULA a array `tweaks` (já declarada pelo chamador,
+# ex. `local -a tweaks=()`) com as chaves escolhidas. Mesmo contrato de flag::has/--*-file/TTY
+# já usado pro resto do netinstall (ver netinstall::flags_shared): `--tweaks <chave>` dado
+# (repetível) manda, sem perguntar nada; sem flag e com TTY, mostra a checklist (pré-marcada
+# conforme a coluna default do catálogo); sem flag e sem TTY, cai pros defaults do catálogo
+# (NÃO "nenhum" — ao contrário de addpkgs, aqui um tweak pode já ter sido comportamento padrão
+# de sempre, ex. operator-panel; um default silencioso "nenhum" seria regressão pra quem
+# automatiza sem passar --tweaks). Produto sem nenhum tweak aplicável (ex. issabel4 hoje) não
+# mostra checklist nenhuma — só deixa `tweaks` vazia.
 #
-# <has_tty> é OBRIGATÓRIO vir já resolvido pelo chamador (`[[ -t 0 && -t 1 ]]` de FORA desta
-# função) — nunca refaça essa checagem aqui dentro. Achado de verdade: o chamador lê o
-# resultado via `x=$(netinstall::phonevox_tweaks_menu ...)`, substituição de comando, que
-# redireciona o STDOUT da função pra um pipe — um `-t 1` checado aqui dentro sempre dá falso
-# (fd 1 é o pipe da captura, não o terminal de verdade), mesmo com TTY real dos dois lados. A
-# checklist em si não sofre com isso (tui::checklist escreve em stderr, não stdout — ver
-# lib/tui.sh), só a DETECÇÃO de TTY quebrava, fazendo o menu nunca aparecer e cair sempre no
-# default silencioso. astver/addpkgs não têm esse problema porque resolvem TTY antes de
-# qualquer captura de stdout.
+# NUNCA chame isto via `$(...)`/`< <(...)` — nem pra ler `tweaks`, nem pra propagar o `exit`
+# de chave desconhecida. Dois achados de verdade, os dois por causa de rodar numa subshell:
+#   1) `<has_tty>` tem que vir JÁ resolvido pelo chamador (`[[ -t 0 && -t 1 ]]` de FORA desta
+#      função) — um `-t 1` checado aqui dentro, se a função rodasse via `$(...)`, sempre daria
+#      falso (fd 1 vira o pipe da captura, não o terminal de verdade), fazendo a checklist
+#      nunca aparecer.
+#   2) `tui::checklist` escreve PARTE da própria UI em stdout, não só stderr (título, itens,
+#      rodapé — ver lib/tui.sh:333-345) — capturar a função via `$(...)` also captura esse
+#      texto, embaralhando tudo junto com as chaves escolhidas (visto de verdade: o resumo
+#      saía com a tela inteira da checklist grudada na linha "Tweaks Phonevox: ...").
+# É por isso que a função escreve direto na array do chamador (mesmo truque de escopo dinâmico
+# de core::_menu_build_options em bin/pvx) em vez de imprimir e deixar o chamador capturar —
+# roda no MESMO processo/terminal do resto do netinstall, igual astver/addpkgs já fazem.
 netinstall::phonevox_tweaks_menu() {
   local produto=$1 has_tty=$2
   local -a keys=() labels=() defaults=()
   local key produtos default_on label
+
+  tweaks=()
 
   while IFS=$'\t' read -r key produtos default_on label; do
     [[ -z $key ]] && continue
@@ -271,8 +278,6 @@ netinstall::phonevox_tweaks_menu() {
     defaults+=("$default_on")
   done < <(netinstall::_tweaks_catalog)
 
-  local -a chosen=()
-
   if flag::has tweaks; then
     local -a given=()
     IFS=$'\x1f' read -r -a given <<<"${PVX_FLAG_MULTI[tweaks]:-${PVX_FLAG_VALUE[tweaks]:-}}"
@@ -289,7 +294,7 @@ netinstall::phonevox_tweaks_menu() {
         log::error 'netinstall: tweak desconhecida (ou não aplicável a %s): %s' "$produto" "$g"
         exit "$PVX_EXIT_USAGE"
       fi
-      chosen+=("$g")
+      tweaks+=("$g")
     done
   elif ((has_tty)) && ((${#keys[@]})); then
     local -a items=() item
@@ -301,16 +306,14 @@ netinstall::phonevox_tweaks_menu() {
     done
     tui::checklist "$(tui::breadcrumb netinstall "$produto" 'Tweaks Phonevox')" "${items[@]}"
     for item in ${TUI_RESULT[@]+"${TUI_RESULT[@]}"}; do
-      chosen+=("${item%% *}")
+      tweaks+=("${item%% *}")
     done
   else
     local i
     for ((i = 0; i < ${#keys[@]}; i++)); do
-      ((defaults[i])) && chosen+=("${keys[i]}")
+      ((defaults[i])) && tweaks+=("${keys[i]}")
     done
   fi
-
-  printf '%s\n' ${chosen[@]+"${chosen[@]}"}
 }
 
 # netinstall::gen_password — senha aleatória por instalação (nunca um default fixo

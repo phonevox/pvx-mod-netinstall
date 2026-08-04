@@ -195,17 +195,12 @@ netinstall::_issabel5_custom() {
   # Tweaks Phonevox (ver docs/netinstall-phonevox-tweaks-spec.md): mesma regra de "pergunta
   # tudo antes" acima — entra depois das senhas, antes do resumo/confirmação.
   #
-  # "$(...) || exit $?", NÃO "mapfile -t tweaks < <(...)": process substitution roda a função
-  # numa subshell assíncrona — um `exit` de dentro dela (ex: --tweaks com chave desconhecida)
-  # só mata a subshell, nunca o processo principal, e o `mapfile` nem percebe (lê stdout vazio
-  # e segue como se nada tivesse acontecido). Achado de verdade: com `< <(...)`, `--tweaks
-  # bicho-que-nao-existe` imprimia o [ERROR] e A INSTALAÇÃO INTEIRA RODAVA DO MESMO JEITO.
-  # Substituição de comando comum propaga o rc pro `||` (mesma classe de gotcha documentada
-  # pro resto do módulo, ver comentário de _issabel5_post_install/amportal).
+  # Chamada DIRETA de propósito, nunca via `$(...)`/`< <(...)` — ver o comentário grande em
+  # cima de netinstall::phonevox_tweaks_menu (lib/common.sh): qualquer subshell aqui quebra a
+  # detecção de TTY E corrompe a UI da checklist (tui::checklist escreve parte de si em
+  # stdout). A função popula `tweaks` direto, igual astver/addpkgs já fazem com TUI_RESULT.
   local -a tweaks=()
-  local _tweaks_out
-  _tweaks_out=$(netinstall::phonevox_tweaks_menu issabel5 "$has_tty") || exit $?
-  [[ -n $_tweaks_out ]] && mapfile -t tweaks <<<"$_tweaks_out"
+  netinstall::phonevox_tweaks_menu issabel5 "$has_tty"
   local tweak_operator_panel=0 _tw
   for _tw in ${tweaks[@]+"${tweaks[@]}"}; do
     [[ $_tw == operator-panel ]] && tweak_operator_panel=1

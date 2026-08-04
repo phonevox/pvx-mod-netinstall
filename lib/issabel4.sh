@@ -122,13 +122,11 @@ netinstall::run_issabel4() {
   # aplica a issabel4 ainda (ex.: "operator-panel" é só-issabel5) — chamado mesmo assim, pra
   # manter o mesmo contrato/resumo dos dois produtos; hoje sempre resolve vazio aqui.
   #
-  # "$(...) || exit $?", NÃO "mapfile -t tweaks < <(...)" — mesmo achado de verdade do
-  # issabel5.sh (ver comentário lá): process substitution esconderia um `exit` de dentro da
-  # função (chave desconhecida) numa subshell que o `mapfile` nunca chega a notar.
+  # Chamada DIRETA de propósito, nunca via `$(...)`/`< <(...)` — ver o comentário grande em
+  # cima de netinstall::phonevox_tweaks_menu (lib/common.sh): quebra TTY e corrompe a UI da
+  # checklist. A função popula `tweaks` direto, igual astver/addpkgs já fazem com TUI_RESULT.
   local -a tweaks=()
-  local _tweaks_out
-  _tweaks_out=$(netinstall::phonevox_tweaks_menu issabel4 "$has_tty") || exit $?
-  [[ -n $_tweaks_out ]] && mapfile -t tweaks <<<"$_tweaks_out"
+  netinstall::phonevox_tweaks_menu issabel4 "$has_tty"
 
   local addpkgs_display='nenhum'
   if ((${#addpkgs_keys[@]})); then
