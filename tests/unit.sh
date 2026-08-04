@@ -298,6 +298,102 @@ out2=$(netinstall::print_summary issabel5 18 nenhum ssh-hardening $'  Porta SSH:
 assert_eq 'print_summary: extra não-vazio aparece no resumo' \
   '1' "$(printf '%s' "$out2" | grep -c 'Porta SSH: 21122')"
 
+# --- ssh_hardening_ask: caminho 100% via flags (determinístico, sem TTY) -----------------------
+ssh_hardening_ask_vars() {
+  # roda ssh_hardening_ask isolado e imprime as SSH_HARDEN_* pra fora (subshell — só leitura).
+  # USER_PW_SET (0|1), não o tamanho: netinstall::gen_password tem tamanho VARIÁVEL entre
+  # chamadas (confirmado: uma chamada real deu 19 chars, não sempre 24) — comparar tamanho
+  # exato flakaria.
+  local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
+    SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
+    SSH_HARDEN_PORT
+  netinstall::ssh_hardening_ask 0
+  local user_pw_set=0
+  [[ -n $SSH_HARDEN_USER_PASSWORD ]] && user_pw_set=1
+  printf 'LOCK_ROOT=%s ROOT_PW=%s CREATE_USER=%s USERNAME=%s PUBKEY=%s ALLOW_PW=%s USER_PW_SET=%s CHANGE_PORT=%s PORT=%s\n' \
+    "$SSH_HARDEN_LOCK_ROOT" "$SSH_HARDEN_ROOT_PASSWORD" "$SSH_HARDEN_CREATE_USER" "$SSH_HARDEN_USERNAME" \
+    "$SSH_HARDEN_PUBKEY" "$SSH_HARDEN_ALLOW_PASSWORD" "$user_pw_set" "$SSH_HARDEN_CHANGE_PORT" "$SSH_HARDEN_PORT"
+}
+
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse >/dev/null 2>&1
+out=$(ssh_hardening_ask_vars)
+assert_eq 'ssh_hardening_ask: sem TTY e sem NENHUMA flag --tweak-ssh-*, tudo fica desligado (0)' \
+  'LOCK_ROOT=0 ROOT_PW= CREATE_USER=0 USERNAME= PUBKEY= ALLOW_PW=0 USER_PW_SET=0 CHANGE_PORT=0 PORT=' "$out"
+
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-lock-root --tweak-ssh-root-password 'senha123' \
+  --tweak-ssh-create-user --tweak-ssh-username phonevox \
+  --tweak-ssh-pubkey 'ssh-ed25519 AAAAtest x' \
+  --tweak-ssh-allow-password --tweak-ssh-change-port --tweak-ssh-port 2222 >/dev/null 2>&1
+out=$(ssh_hardening_ask_vars)
+assert_eq 'ssh_hardening_ask: com flags explícitas, resolve tudo sem perguntar (senha custom)' \
+  'LOCK_ROOT=1 ROOT_PW=senha123 CREATE_USER=1 USERNAME=phonevox PUBKEY=ssh-ed25519 AAAAtest x ALLOW_PW=1 USER_PW_SET=1 CHANGE_PORT=1 PORT=2222' "$out"
+
+# NOTA: passa --tweak-ssh-pubkey mesmo só querendo testar --tweak-ssh-lock-root — create-user
+# também cai no próprio default (1) por não ter flag própria, e default 1 exige pubkey (mesma
+# regra de sempre); omitir a flag aqui faria a função sair com PVX_EXIT_USAGE, não com o
+# resultado esperado abaixo.
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-lock-root --tweak-ssh-pubkey 'ssh-ed25519 AAAAtest x' >/dev/null 2>&1
+out=$(ssh_hardening_ask_vars)
+assert_eq 'ssh_hardening_ask: 1 flag dada ativa "resolve com defaults" pros itens sem flag própria' \
+  'LOCK_ROOT=1 ROOT_PW=phonevox@@ CREATE_USER=1 USERNAME=phonevox PUBKEY=ssh-ed25519 AAAAtest x ALLOW_PW=0 USER_PW_SET=0 CHANGE_PORT=1 PORT=21122' "$out"
+
+# --- ssh_hardening_ask: create_user=1 sem --tweak-ssh-pubkey e sem TTY = erro claro ------------
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-create-user >/dev/null 2>&1
+assert_rc 'ssh_hardening_ask: create_user sem --tweak-ssh-pubkey e sem TTY sai com PVX_EXIT_USAGE' \
+  "$PVX_EXIT_USAGE" bash -c '
+    source "$PVX_LIB_DIR/bootstrap.sh"
+    pvx::require color log os exec tui flags net
+    color::init; log::init
+    source "$PVX_MODULE_DIR/lib/common.sh"
+    flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+    flag::parse --tweak-ssh-create-user
+    local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
+      SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
+      SSH_HARDEN_PORT
+    netinstall::ssh_hardening_ask 0
+  '
+
+# --- ssh_hardening_ask: username/porta inválidos são rejeitados mesmo vindo de flag ------------
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-username '../etc/passwd' --tweak-ssh-pubkey 'ssh-ed25519 AAAA x' >/dev/null 2>&1
+assert_rc 'ssh_hardening_ask: --tweak-ssh-username inválido sai com PVX_EXIT_USAGE' \
+  "$PVX_EXIT_USAGE" bash -c '
+    source "$PVX_LIB_DIR/bootstrap.sh"
+    pvx::require color log os exec tui flags net
+    color::init; log::init
+    source "$PVX_MODULE_DIR/lib/common.sh"
+    flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+    flag::parse --tweak-ssh-username "../etc/passwd" --tweak-ssh-pubkey "ssh-ed25519 AAAA x"
+    local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
+      SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
+      SSH_HARDEN_PORT
+    netinstall::ssh_hardening_ask 0
+  '
+
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-port 999999 --tweak-ssh-pubkey 'ssh-ed25519 AAAA x' >/dev/null 2>&1
+# --tweak-ssh-pubkey precisa vir junto: create-user cai no próprio default (1) por não ter
+# flag própria, e SEM pubkey a função já sairia com PVX_EXIT_USAGE antes de chegar na
+# validação de porta — "passaria" pelo motivo errado, sem nunca exercitar o código de porta.
+assert_rc 'ssh_hardening_ask: --tweak-ssh-port fora do range 1-65535 sai com PVX_EXIT_USAGE' \
+  "$PVX_EXIT_USAGE" bash -c '
+    source "$PVX_LIB_DIR/bootstrap.sh"
+    pvx::require color log os exec tui flags net
+    color::init; log::init
+    source "$PVX_MODULE_DIR/lib/common.sh"
+    flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+    flag::parse --tweak-ssh-port 999999 --tweak-ssh-pubkey "ssh-ed25519 AAAA x"
+    local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
+      SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
+      SSH_HARDEN_PORT
+    netinstall::ssh_hardening_ask 0
+  '
+unset -f ssh_hardening_ask_vars
+
 # --- ask_password: sem TTY (caso deste próprio runner de testes) nunca trava, sempre devolve ---
 # --- algo pronto pra uso, e nunca escreve o valor gerado em stdout misturado com o prompt ------
 # NOTA: isto NÃO cobre a exibição de verdade (tui::password, título/breadcrumb + leitura
