@@ -275,6 +275,20 @@ else
   _FAIL=$((_FAIL + 1))
 fi
 
+# --- save_credentials: pares extra key=value opcionais, sem quebrar a chamada de 3 args --------
+export PVX_MODULE_STATE_DIR=$(pvx::tmpdir)/state-test
+cred_file=$(netinstall::save_credentials teste sqlpw123 webpw456)
+assert_eq 'save_credentials: chamada com 3 args (sem extra) continua funcionando' \
+  '0' "$(grep -c '^ssh_' "$cred_file")"
+
+cred_file2=$(netinstall::save_credentials teste sqlpw123 webpw456 'ssh_user=phonevox' 'ssh_port=21122')
+assert_eq 'save_credentials: primeiro par extra aparece no arquivo' \
+  '1' "$(grep -c '^ssh_user=phonevox$' "$cred_file2")"
+assert_eq 'save_credentials: segundo par extra também aparece' \
+  '1' "$(grep -c '^ssh_port=21122$' "$cred_file2")"
+assert_eq 'save_credentials: campos originais continuam presentes com extras' \
+  '1' "$(grep -c '^mysql_root_password=sqlpw123$' "$cred_file2")"
+
 # --- ask_password: sem TTY (caso deste próprio runner de testes) nunca trava, sempre devolve ---
 # --- algo pronto pra uso, e nunca escreve o valor gerado em stdout misturado com o prompt ------
 # NOTA: isto NÃO cobre a exibição de verdade (tui::password, título/breadcrumb + leitura

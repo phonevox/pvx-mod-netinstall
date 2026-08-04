@@ -356,7 +356,10 @@ netinstall::sshd_config_upsert() {
 # em $PVX_MODULE_STATE_DIR (0600) e devolve o caminho — é a única cópia recuperável depois que
 # a tela rolar.
 netinstall::save_credentials() {
-  local produto=$1 sql_pw=$2 web_pw=$3 dir file ts
+  local produto=$1 sql_pw=$2 web_pw=$3
+  shift 3
+  local -a extra=("$@")
+  local dir file ts kv
   dir=${PVX_MODULE_STATE_DIR:?PVX_MODULE_STATE_DIR não definido}
   mkdir -p "$dir"
   printf -v ts '%(%Y%m%dT%H%M%S)T' -1
@@ -366,6 +369,9 @@ netinstall::save_credentials() {
     printf 'data=%s\n' "$ts"
     printf 'mysql_root_password=%s\n' "$sql_pw"
     printf 'web_admin_password=%s\n' "$web_pw"
+    for kv in ${extra[@]+"${extra[@]}"}; do
+      printf '%s\n' "$kv"
+    done
   } >"$file"
   chmod 0600 "$file"
   printf '%s' "$file"
