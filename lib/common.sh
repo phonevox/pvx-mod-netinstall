@@ -225,6 +225,7 @@ netinstall::print_summary() {
 netinstall::_tweaks_catalog() {
   cat <<'EOF'
 operator-panel	issabel5	1	Painel do operador (control_panel — visão de recepção/switchboard)
+ssh-hardening	issabel5	1	Hardening de acesso SSH (bloqueia root, cria usuário admin dedicado, muda porta)
 EOF
 }
 

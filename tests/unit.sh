@@ -123,6 +123,15 @@ assert_eq '_mem_total_kb soma MemTotal + SwapTotal (KB)' \
 assert_eq '_mem_total_kb devolve 0 se o arquivo não existir (nunca bloqueia por um sinal que não existe)' \
   '0' "$(netinstall::_mem_total_kb "$(pvx::tmpdir)/nao-existe-meminfo")"
 
+# --- catálogo: ssh-hardening está registrado pro issabel5, default ON -------------------------
+if netinstall::_tweaks_catalog | grep -q '^ssh-hardening	issabel5	1	'; then
+  printf '  ok - catálogo registra ssh-hardening pro issabel5, default ON\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - catálogo deveria ter uma linha ssh-hardening/issabel5/1/...\n' >&2
+  _FAIL=$((_FAIL + 1))
+fi
+
 # --- install_packages: tenta a lista inteira num único dnf install ----------------------------
 # Grava a chamada num arquivo, não num array: `out=$(...)` roda install_packages numa subshell,
 # e mutações de array feitas ali dentro (via os::pkg_install) não voltam pro shell principal —
