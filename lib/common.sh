@@ -343,7 +343,9 @@ netinstall::sshd_config_upsert() {
   [[ -w $file ]] || return 1
 
   local last_active
-  last_active=$(grep -E "^[[:space:]]*${directive}[[:space:]]" "$file" | tail -n1)
+  # `|| true`: grep sem match (diretiva ainda não existe ativa — caso comum) sai com rc=1, que
+  # sob `set -e`+`pipefail` mataria o script inteiro numa simples atribuição de variável.
+  last_active=$(grep -E "^[[:space:]]*${directive}[[:space:]]" "$file" | tail -n1) || true
   [[ $last_active == "$directive $value" ]] && return 0
 
   sed -i -E "s/^([[:space:]]*)(${directive}[[:space:]].*)/\1# disabled by pvx netinstall ssh-hardening: \2/" "$file"

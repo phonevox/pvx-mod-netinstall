@@ -148,6 +148,35 @@ assert_rc 'ssh_validate_pubkey: rejeita texto solto' 1 \
 assert_rc 'ssh_validate_pubkey: rejeita chave privada (prefixo errado)' 1 \
   netinstall::ssh_validate_pubkey '-----BEGIN OPENSSH PRIVATE KEY-----'
 
+# --- sshd_config_upsert -----------------------------------------------------------------------
+sshd_fixture=$(pvx::tmpdir)/sshd_config-fixture
+cat >"$sshd_fixture" <<'EOF'
+#Port 22
+#PermitRootLogin prohibit-password
+Subsystem sftp /usr/libexec/openssh/sftp-server
+EOF
+
+netinstall::sshd_config_upsert "$sshd_fixture" Port 21122
+assert_eq 'sshd_config_upsert: acrescenta a diretiva quando só existe comentada' \
+  'Port 21122' "$(grep -E '^Port ' "$sshd_fixture" | tail -n1)"
+
+netinstall::sshd_config_upsert "$sshd_fixture" Port 21122
+assert_eq 'sshd_config_upsert: rodar de novo com o mesmo valor não duplica' \
+  '1' "$(grep -cE '^Port ' "$sshd_fixture")"
+
+netinstall::sshd_config_upsert "$sshd_fixture" Port 2222
+assert_eq 'sshd_config_upsert: trocar o valor comenta a antiga e acrescenta a nova' \
+  'Port 2222' "$(grep -E '^Port ' "$sshd_fixture" | tail -n1)"
+assert_eq 'sshd_config_upsert: a linha antiga fica comentada, não apagada' \
+  '1' "$(grep -c 'disabled.*Port 21122' "$sshd_fixture")"
+
+netinstall::sshd_config_upsert "$sshd_fixture" PermitRootLogin no
+assert_eq 'sshd_config_upsert: funciona pra outra diretiva (PermitRootLogin)' \
+  'PermitRootLogin no' "$(grep -E '^PermitRootLogin ' "$sshd_fixture" | tail -n1)"
+
+assert_rc 'sshd_config_upsert: erro se o arquivo não existe/não é gravável' 1 \
+  netinstall::sshd_config_upsert "$(pvx::tmpdir)/nao-existe-sshd-config" Port 22
+
 # --- install_packages: tenta a lista inteira num único dnf install ----------------------------
 # Grava a chamada num arquivo, não num array: `out=$(...)` roda install_packages numa subshell,
 # e mutações de array feitas ali dentro (via os::pkg_install) não voltam pro shell principal —
