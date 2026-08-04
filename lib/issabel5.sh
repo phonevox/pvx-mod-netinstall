@@ -213,6 +213,7 @@ netinstall::_issabel5_custom() {
   netinstall::_issabel5_enable_php_remi
   netinstall::_issabel5_install_packages "$astver" "${addpkgs[@]}"
   netinstall::_issabel5_post_install
+  netinstall::_issabel5_install_db
   netinstall::_issabel5_control_panel
   netinstall::_issabel5_set_timezone
   netinstall::_issabel5_set_passwords "$sql_pw" "$web_pw"
@@ -395,6 +396,23 @@ netinstall::_issabel5_set_timezone() {
       log::warn 'netinstall issabel5: não encontrei o placeholder de date.timezone em %s — confira manualmente' "$php_ini"
     fi
   fi
+}
+
+# netinstall::_issabel5_install_db — cria o schema do banco `asterisk` (ampusers, etc.) via
+# /usr/src/issabelPBX/framework/install_amp --installdb. O legado (issabel5-netinstall.sh)
+# roda isto de graça: `issabel-admin-passwords --init` (dialog interativo) chama
+# action_installIssabelPBX() ANTES de mexer em qualquer senha, que é só isto aqui. O `--cli
+# init` (usado por _issabel5_set_passwords, abaixo, pra dar suporte a senha via flag em vez de
+# dialog) pula esse passo inteiramente — action_cliPasswords() no /usr/bin/issabel-admin-
+# passwords (pacote issabel-firstboot) nunca chama action_installIssabelPBX(). Sem isto, o
+# banco `asterisk` nunca é criado e o --cli init quebra com "Table 'asterisk.ampusers' doesn't
+# exist" (achado de verdade, reproduzido e confirmado numa VPS: SHOW DATABASES não listava
+# `asterisk` até rodar isto manualmente). Roda ANTES de _set_passwords, com a senha do root do
+# MySQL ainda em branco (post_install termina deixando assim de propósito) — install_amp não
+# precisa de --dbpass nesse estado, confirmado rodando ambas as formas na mesma VPS.
+netinstall::_issabel5_install_db() {
+  log::info 'netinstall issabel5: instalando o schema do banco de dados do IssabelPBX (install_amp --installdb)...'
+  srun -- /usr/src/issabelPBX/framework/install_amp --dbuser=root --installdb --scripted --language=en
 }
 
 netinstall::_issabel5_set_passwords() {
