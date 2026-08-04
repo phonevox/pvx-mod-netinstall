@@ -589,6 +589,53 @@ netinstall::ssh_hardening_ask() {
   fi
 }
 
+# netinstall::ssh_hardening_apply <lock_root> <root_pw> <create_user> <username> <pubkey>
+# <allow_pw> <user_pw> <change_port> <port> [sshd_config] — só escreve/valida; NUNCA reinicia
+# o sshd (ativa no reboot final do netinstall::_issabel5_finish).
+netinstall::ssh_hardening_apply() {
+  local lock_root=$1 root_pw=$2 create_user=$3 username=$4 pubkey=$5
+  local allow_pw=$6 user_pw=$7 change_port=$8 port=$9
+  local sshd_config=${10:-/etc/ssh/sshd_config}
+
+  ((lock_root || create_user || change_port)) || return 0
+
+  [[ -f $sshd_config ]] && srun -- cp --preserve "$sshd_config" "$sshd_config.bak.$(date +%F_%H%M%S)"
+
+  if ((lock_root)); then
+    log::info 'netinstall issabel5: ssh-hardening — bloqueando login SSH do root...'
+    printf '%s:%s' root "$root_pw" | run -- chpasswd
+    netinstall::sshd_config_upsert "$sshd_config" PermitRootLogin no
+  fi
+
+  if ((create_user)); then
+    log::info 'netinstall issabel5: ssh-hardening — criando usuário dedicado %s...' "$username"
+    id "$username" &>/dev/null || run -- useradd -m -s /bin/bash "$username"
+    run -- usermod -aG wheel "$username"
+    local home_dir ssh_dir
+    home_dir=$(getent passwd "$username" | cut -d: -f6)
+    ssh_dir="$home_dir/.ssh"
+    run -- mkdir -p "$ssh_dir"
+    run -- chmod 700 "$ssh_dir"
+    run -- bash -c 'grep -qxF "$1" "$2" 2>/dev/null || printf "%s\n" "$1" >>"$2"' \
+      -- "$pubkey" "$ssh_dir/authorized_keys"
+    run -- chmod 600 "$ssh_dir/authorized_keys"
+    run -- chown -R "$username:$username" "$ssh_dir"
+    ((allow_pw)) && printf '%s:%s' "$username" "$user_pw" | run -- chpasswd
+  fi
+
+  if ((change_port)); then
+    log::info 'netinstall issabel5: ssh-hardening — trocando a porta SSH para %s...' "$port"
+    netinstall::sshd_config_upsert "$sshd_config" Port "$port"
+  fi
+
+  if ! run -- sshd -t -f "$sshd_config"; then
+    log::error 'netinstall issabel5: ssh-hardening — sshd_config inválido, restaurando backup (mudanças de SSH NÃO aplicadas)'
+    local backup
+    backup=$(ls -t "$sshd_config".bak.* 2>/dev/null | head -n1)
+    [[ -n $backup ]] && run -- cp --preserve "$backup" "$sshd_config"
+  fi
+}
+
 # netinstall::render_astver_placeholder <arquivo> <astver> — os arquivos de pacote do legado
 # têm literalmente "asterisk$ASTVER" (texto, não variável expandida — agora que a lista é um
 # arquivo de dados puro). Substitui e imprime a lista pronta pro stdout.
