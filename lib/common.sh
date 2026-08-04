@@ -204,7 +204,7 @@ netinstall::resolve_secret_or_ask() {
 # fora da tela ou veio só de flag, nunca visível junto. Vai pra stderr (igual ao resto dos
 # prompts do menu), não por log:: — é uma tela de revisão, não um evento de log.
 netinstall::print_summary() {
-  local produto=$1 astver=$2 addpkgs_display=$3 tweaks_display=${4:-nenhum}
+  local produto=$1 astver=$2 addpkgs_display=$3 tweaks_display=${4:-nenhum} extra=${5:-}
   local tz lang
   tz=$(flag::get timezone 'America/Sao_Paulo')
   lang=$(flag::get lang pt_BR)
@@ -215,6 +215,7 @@ netinstall::print_summary() {
   printf '  Timezone: %s\n' "$tz" >&2
   printf '  Idioma: %s\n' "$lang" >&2
   printf '  Senhas (MySQL/Web): definidas\n' >&2
+  [[ -n $extra ]] && printf '%s\n' "$extra" >&2
   printf '\n' >&2
 }
 

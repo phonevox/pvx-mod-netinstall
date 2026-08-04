@@ -289,6 +289,15 @@ assert_eq 'save_credentials: segundo par extra também aparece' \
 assert_eq 'save_credentials: campos originais continuam presentes com extras' \
   '1' "$(grep -c '^mysql_root_password=sqlpw123$' "$cred_file2")"
 
+# --- print_summary: 5º parâmetro opcional aparece só quando não-vazio -------------------------
+out=$(netinstall::print_summary issabel5 18 nenhum ssh-hardening 2>&1 >/dev/null)
+assert_eq 'print_summary: chamada de 4 args (sem extra) continua funcionando' \
+  '0' "$(printf '%s' "$out" | grep -c 'Porta SSH')"
+
+out2=$(netinstall::print_summary issabel5 18 nenhum ssh-hardening $'  Porta SSH: 21122' 2>&1 >/dev/null)
+assert_eq 'print_summary: extra não-vazio aparece no resumo' \
+  '1' "$(printf '%s' "$out2" | grep -c 'Porta SSH: 21122')"
+
 # --- ask_password: sem TTY (caso deste próprio runner de testes) nunca trava, sempre devolve ---
 # --- algo pronto pra uso, e nunca escreve o valor gerado em stdout misturado com o prompt ------
 # NOTA: isto NÃO cobre a exibição de verdade (tui::password, título/breadcrumb + leitura
