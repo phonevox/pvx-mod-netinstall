@@ -228,8 +228,8 @@ operator-panel	issabel5	1	Painel do operador (control_panel — visão de recep�
 EOF
 }
 
-# netinstall::phonevox_tweaks_menu <produto> — resolve as tweaks Phonevox aplicáveis a
-# <produto> (filtra o catálogo acima) e imprime as chaves escolhidas, uma por linha. Mesmo
+# netinstall::phonevox_tweaks_menu <produto> <has_tty> — resolve as tweaks Phonevox aplicáveis
+# a <produto> (filtra o catálogo acima) e imprime as chaves escolhidas, uma por linha. Mesmo
 # contrato de flag::has/--*-file/TTY já usado pro resto do netinstall (ver
 # netinstall::flags_shared): `--tweaks <chave>` dado (repetível) manda, sem perguntar nada;
 # sem flag e com TTY, mostra a checklist (pré-marcada conforme a coluna default do catálogo);
@@ -237,8 +237,18 @@ EOF
 # aqui um tweak pode já ter sido comportamento padrão de sempre, ex. operator-panel; um default
 # silencioso "nenhum" seria regressão pra quem automatiza sem passar --tweaks). Produto sem
 # nenhum tweak aplicável (ex. issabel4 hoje) não mostra checklist nenhuma — só devolve vazio.
+#
+# <has_tty> é OBRIGATÓRIO vir já resolvido pelo chamador (`[[ -t 0 && -t 1 ]]` de FORA desta
+# função) — nunca refaça essa checagem aqui dentro. Achado de verdade: o chamador lê o
+# resultado via `x=$(netinstall::phonevox_tweaks_menu ...)`, substituição de comando, que
+# redireciona o STDOUT da função pra um pipe — um `-t 1` checado aqui dentro sempre dá falso
+# (fd 1 é o pipe da captura, não o terminal de verdade), mesmo com TTY real dos dois lados. A
+# checklist em si não sofre com isso (tui::checklist escreve em stderr, não stdout — ver
+# lib/tui.sh), só a DETECÇÃO de TTY quebrava, fazendo o menu nunca aparecer e cair sempre no
+# default silencioso. astver/addpkgs não têm esse problema porque resolvem TTY antes de
+# qualquer captura de stdout.
 netinstall::phonevox_tweaks_menu() {
-  local produto=$1
+  local produto=$1 has_tty=$2
   local -a keys=() labels=() defaults=()
   local key produtos default_on label
 
@@ -281,7 +291,7 @@ netinstall::phonevox_tweaks_menu() {
       fi
       chosen+=("$g")
     done
-  elif [[ -t 0 && -t 1 ]] && ((${#keys[@]})); then
+  elif ((has_tty)) && ((${#keys[@]})); then
     local -a items=() item
     local i
     TUI_CHECKLIST_DEFAULT=()

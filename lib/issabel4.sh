@@ -127,7 +127,7 @@ netinstall::run_issabel4() {
   # função (chave desconhecida) numa subshell que o `mapfile` nunca chega a notar.
   local -a tweaks=()
   local _tweaks_out
-  _tweaks_out=$(netinstall::phonevox_tweaks_menu issabel4) || exit $?
+  _tweaks_out=$(netinstall::phonevox_tweaks_menu issabel4 "$has_tty") || exit $?
   [[ -n $_tweaks_out ]] && mapfile -t tweaks <<<"$_tweaks_out"
 
   local addpkgs_display='nenhum'

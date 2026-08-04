@@ -204,7 +204,7 @@ netinstall::_issabel5_custom() {
   # pro resto do módulo, ver comentário de _issabel5_post_install/amportal).
   local -a tweaks=()
   local _tweaks_out
-  _tweaks_out=$(netinstall::phonevox_tweaks_menu issabel5) || exit $?
+  _tweaks_out=$(netinstall::phonevox_tweaks_menu issabel5 "$has_tty") || exit $?
   [[ -n $_tweaks_out ]] && mapfile -t tweaks <<<"$_tweaks_out"
   local tweak_operator_panel=0 _tw
   for _tw in ${tweaks[@]+"${tweaks[@]}"}; do
