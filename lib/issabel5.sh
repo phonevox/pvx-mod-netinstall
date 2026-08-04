@@ -368,20 +368,14 @@ netinstall::_issabel5_post_install() {
   if [[ -f /etc/asterisk/extensions_custom.conf.sample ]]; then
     run -- mv -f /etc/asterisk/extensions_custom.conf.sample /etc/asterisk/extensions_custom.conf
   fi
-  # `if run ...; then :; else ...; fi`, não uma chamada solta — /usr/sbin/amportal só existe
-  # depois do primeiro acesso ao wizard web do Issabel (que este netinstall não roda), então NÃO
-  # existir aqui é esperado, não um erro real. O legado (issabel5-netinstall.sh) faz a mesma
-  # chamada nos mesmos dois pontos e nunca notava a falha porque envolve tudo isto em
-  # "(...) &> /dev/null". Aqui, sob `set -e`, uma chamada solta a `run` (mesmo sem `srun`) ainda
-  # propaga o rc != 0 pro chamador e dispara o errexit — `run` só evita o `exit` interno de
-  # exec::_run_impl, não blinda quem chamou (mesmo padrão já usado logo abaixo, em
-  # _issabel5_set_passwords, pro issabel-admin-passwords). Achado de verdade: rodando --custom do
-  # zero numa VPS limpa, a instalação completa (repos, ~60 pacotes, control_panel, timezone,
-  # senhas) e só quebrava aqui, em algo que o próprio legado já tratava como best-effort.
-  if run -- /usr/sbin/amportal chown; then
+  # `--ok 0,1,127`: rc=127 é o amportal ainda não existir neste ponto (chega só depois, em
+  # install_amp --installdb); rc=1 é chown_asterisk() tendo sucesso total mas terminando com
+  # call_hook chown_asterisk, que retorna 1 por padrão quando nenhum chown_asterisk_hook_* está
+  # registrado — não é falha real. Confirmado rodando o comando manualmente numa VPS.
+  if run --ok 0,1,127 -- /usr/sbin/amportal chown; then
     :
   else
-    log::debug 'netinstall issabel5: amportal chown falhou/indisponível (esperado sem o wizard web do Issabel) — ignorando'
+    log::debug 'netinstall issabel5: amportal chown retornou rc=%d (esperado sem hook chown_asterisk_hook_* registrado — ver comentário acima) — ignorando' "$PVX_RC"
   fi
 }
 
@@ -442,7 +436,9 @@ netinstall::_issabel5_set_passwords() {
   log::info 'netinstall issabel5: definindo senhas de acesso (MySQL root / admin Web)...'
 
   if run --mask 3,4 -- /usr/bin/issabel-admin-passwords --cli init "$sql_pw" "$web_pw"; then
-    :
+    # `--cli init` nunca roda action_changeFop2() (só o branch `--init`/dialog do legado roda) —
+    # sem isto o fop2.cfg fica com a senha AMI de fábrica, incompatível com a gerada agora.
+    netinstall::_issabel5_sync_fop2_manager_secret
   else
     log::warn 'netinstall issabel5: issabel-admin-passwords falhou/indisponível — rode manualmente depois'
   fi
@@ -452,22 +448,25 @@ netinstall::_issabel5_set_passwords() {
   log::info 'netinstall issabel5: credenciais salvas em %s (0600) — só existem aí e nesta tela' "$cred_file"
 }
 
+# netinstall::_issabel5_sync_fop2_manager_secret — port de action_changeFop2(): roda
+# create_fop2_manager_user.pl, que cria/reaproveita o usuário AMI dedicado `[fop2]` e sincroniza
+# a senha em fop2.cfg. Best-effort (run, não srun): fop2 é opcional, o binário pode não existir.
+netinstall::_issabel5_sync_fop2_manager_secret() {
+  local script=/usr/local/fop2/create_fop2_manager_user.pl
+  [[ -x $script ]] || return 0
+  log::info 'netinstall issabel5: sincronizando a senha do AMI usada pelo FOP2 (operator-panel)...'
+  if ! run -- "$script"; then
+    log::warn 'netinstall issabel5: falha ao sincronizar a senha do AMI do FOP2 — painel do operador pode não autenticar (rode %s manualmente)' "$script"
+  fi
+}
+
 netinstall::_issabel5_finish() {
   run -- bash -c "rm -f /tmp/inst1.txt /tmp/inst2.txt"
-  # `if run ...; then :; else ...; fi`, não uma chamada solta — /usr/sbin/amportal só existe
-  # depois do primeiro acesso ao wizard web do Issabel (que este netinstall não roda), então NÃO
-  # existir aqui é esperado, não um erro real. O legado (issabel5-netinstall.sh) faz a mesma
-  # chamada nos mesmos dois pontos e nunca notava a falha porque envolve tudo isto em
-  # "(...) &> /dev/null". Aqui, sob `set -e`, uma chamada solta a `run` (mesmo sem `srun`) ainda
-  # propaga o rc != 0 pro chamador e dispara o errexit — `run` só evita o `exit` interno de
-  # exec::_run_impl, não blinda quem chamou (mesmo padrão já usado logo abaixo, em
-  # _issabel5_set_passwords, pro issabel-admin-passwords). Achado de verdade: rodando --custom do
-  # zero numa VPS limpa, a instalação completa (repos, ~60 pacotes, control_panel, timezone,
-  # senhas) e só quebrava aqui, em algo que o próprio legado já tratava como best-effort.
-  if run -- /usr/sbin/amportal chown; then
+  # `--ok 0,1,127`: mesma chamada e mesmo motivo de netinstall::_issabel5_post_install.
+  if run --ok 0,1,127 -- /usr/sbin/amportal chown; then
     :
   else
-    log::debug 'netinstall issabel5: amportal chown falhou/indisponível (esperado sem o wizard web do Issabel) — ignorando'
+    log::debug 'netinstall issabel5: amportal chown retornou rc=%d (esperado sem hook chown_asterisk_hook_* registrado) — ignorando' "$PVX_RC"
   fi
   log::info 'netinstall issabel5: instalação concluída.'
   if (( ! ${PVX_FLAG_VALUE[reboot]:-1} )); then
