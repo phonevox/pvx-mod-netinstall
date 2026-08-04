@@ -4,11 +4,17 @@
 # de yum/sed/mysql crus. Não inclui a camada de customizações Phonevox do issabel4 (tema,
 # avaliação, firewall etc.) — o issabel5 legado nunca teve essas, só control_panel + timezone.
 #
-# `pvx netinstall issabel5` roda o instalador RAW (github.com/phonevox/pissabel5) por padrão —
-# o port pvx (tudo abaixo, ver netinstall::_issabel5_custom) fica disponível via --custom, mas
-# não é mais o padrão enquanto problemas de resolução de pacote nele (issabel-framework
-# dependendo de php-imap/php-mcrypt indisponíveis em certas VPS) não são resolvidos. Ver
-# netinstall::_issabel5_raw pro dispatch.
+# `pvx netinstall issabel5` roda o fluxo próprio do pvx (tudo abaixo, ver
+# netinstall::_issabel5_custom) por padrão — o instalador RAW legado (github.com/phonevox/
+# pissabel5) fica disponível via --legacy. Ver netinstall::_issabel5_raw pro dispatch.
+#
+# O fluxo próprio cobre o mesmo problema de resolução de pacote que o raw sempre tratou via
+# centos8_tweaks (repo Remi + módulo php:remi-7.4 + powertools/devel) — ver
+# netinstall::_issabel5_enable_php_remi. Sem isso, php-imap/php-mcrypt/php-tidy (e qualquer
+# outro pacote php-* que dependa deles, ex: php-PHPMailer/php-tcpdf) não existem no módulo php
+# padrão do AppStream, e o dnf install de "pacotes base + Asterisk" falhava com "No match for
+# argument" pra cada um — motivo pelo qual o fluxo próprio virou o padrão (era opt-in via
+# --custom antes disso ser corrigido e validado numa VPS real de ponta a ponta).
 
 netinstall::_issabel5_addpkgs_help() {
   cat <<'EOF'
@@ -39,39 +45,38 @@ netinstall::_issabel5_resolve_addpkgs() {
 
 # netinstall::run_issabel5 "$@" — despacha ANTES de qualquer flag::parse "de verdade" entre os
 # dois fluxos possíveis (mesmo padrão de netinstall::ensure_tmux, que já varre argv cru pelo
-# mesmo motivo): por padrão, roda o instalador RAW do issabel5 (issabel5-netinstall.sh do
-# github.com/phonevox/pissabel5, sem modificação nenhuma — literalmente baixa e executa); com
-# `--custom`, roda o fluxo próprio do pvx (flags, tui, resumo, etc. — o que era o comportamento
-# padrão até aqui). Não é remoção de código: o fluxo custom continua inteiro, só deixou de ser
-# o padrão enquanto os problemas de resolução de pacote dele (issabel-framework/php-imap etc.)
-# não são resolvidos — o raw é o caminho comprovado que já funciona hoje.
+# mesmo motivo): por padrão, roda o fluxo próprio do pvx (flags, tui, resumo, etc.); com
+# `--legacy`, roda o instalador RAW do issabel5 (issabel5-netinstall.sh do github.com/phonevox/
+# pissabel5, sem modificação nenhuma — literalmente baixa e executa).
+#
+# `--custom` continua aceito (bool, sem efeito) só por compatibilidade com quem já tinha esse
+# hábito de digitar — o fluxo próprio é o padrão agora, não precisa mais ser pedido.
 netinstall::run_issabel5() {
-  local a custom=0 help=0
+  local a legacy=0 help=0
   for a in "$@"; do
     case $a in
-      --custom) custom=1 ;;
+      --legacy) legacy=1 ;;
       -h | --help) help=1 ;;
     esac
   done
 
-  if (( help && ! custom )); then
-    # sem --custom junto: mostra só o uso mínimo do modo raw (ele não aceita flag nenhuma, é
-    # literalmente o script legado); com --custom, deixa cair pro flag::parse abaixo, que já
-    # imprime o --help completo do fluxo pvx.
+  if (( help && legacy )); then
+    # --legacy junto com --help: mostra só o uso mínimo do modo raw (ele não aceita flag
+    # nenhuma, é literalmente o script legado); sem --legacy, deixa cair pro flag::parse
+    # abaixo, que já imprime o --help completo do fluxo pvx (agora o padrão).
     cat <<'EOF'
-uso: pvx netinstall issabel5 [--custom]
+uso: pvx netinstall issabel5 --legacy
 
-sem --custom (padrão): baixa e executa o instalador raw do Issabel 5
-(github.com/phonevox/pissabel5), sem nenhuma modificação — o mesmo wizard interativo (dialog)
-de sempre, sem flags/upfront do pvx.
+--legacy: baixa e executa o instalador raw do Issabel 5 (github.com/phonevox/pissabel5), sem
+nenhuma modificação — o mesmo wizard interativo (dialog) de sempre, sem flags/upfront do pvx.
 
---custom: usa o fluxo próprio do pvx (flags, prompts, resumo antes de confirmar, etc.) — ver
---help desse modo pra lista completa de flags.
+Sem --legacy (padrão): usa o fluxo próprio do pvx (flags, prompts, resumo antes de confirmar,
+etc.) — ver --help (sem --legacy) pra lista completa de flags.
 EOF
     return 0
   fi
 
-  if (( ! custom )); then
+  if (( legacy )); then
     netinstall::_issabel5_raw "$@"
     return $?
   fi
@@ -87,7 +92,7 @@ EOF
 # descobrir sozinho, 20 minutos depois, que não tinha rede.
 netinstall::_issabel5_raw() {
   netinstall::ensure_tmux issabel5 "$@"
-  netinstall::preflight issabel5
+  netinstall::preflight issabel5 8
 
   exec::require_cmd git || exit "$PVX_EXIT_UNAVAILABLE"
 
@@ -107,7 +112,7 @@ netinstall::_issabel5_raw() {
   fi
   srun -- chmod +x "$repo_dir/issabel5-netinstall.sh"
 
-  log::info 'netinstall issabel5: entregando o controle pro instalador raw (sem flags do pvx — use --custom pro fluxo próprio)...'
+  log::info 'netinstall issabel5: entregando o controle pro instalador raw (sem flags do pvx — tire --legacy pro fluxo próprio, que é o padrão)...'
   exec bash -c 'cd "$1" && exec ./issabel5-netinstall.sh' -- "$repo_dir"
 }
 
@@ -115,10 +120,12 @@ netinstall::_issabel5_custom() {
   netinstall::ensure_tmux issabel5 "$@"
 
   flag::reset
-  flag::set_usage 'pvx netinstall issabel5 --custom' 'Instala o Issabel 5 do zero (Rocky/CentOS/RHEL 8) via o fluxo próprio do pvx'
+  flag::set_usage 'pvx netinstall issabel5' 'Instala o Issabel 5 do zero (Rocky/CentOS/RHEL 8) via o fluxo próprio do pvx'
   flag::add_standard
   netinstall::flags_shared
-  flag::add custom --type bool --help 'usa este fluxo (obrigatório pra chegar aqui — sem ele, roda o instalador raw)'
+  # aceita e ignora — este é o fluxo padrão agora; --custom só existe pra não quebrar quem já
+  # tinha o hábito de digitar. Ver netinstall::run_issabel5 pro dispatch de verdade (--legacy).
+  flag::add custom --type bool --help 'sem efeito — este já é o fluxo padrão (aceito só por compatibilidade)'
   # SEM --default de propósito: um --default preenche flag::get antes do `[[ -z $astver ]]`
   # embaixo sequer rodar, matando pra sempre o caminho interativo (achado de verdade: o
   # seletor de Asterisk 16/18 nunca aparecia, a instalação sempre seguia direto pro Asterisk
@@ -134,7 +141,7 @@ netinstall::_issabel5_custom() {
   local has_tty=0
   [[ -t 0 && -t 1 ]] && has_tty=1
 
-  netinstall::preflight issabel5
+  netinstall::preflight issabel5 8
 
   local astver=''
   local -a addpkgs_keys=()
@@ -203,6 +210,7 @@ netinstall::_issabel5_custom() {
   # depois que o comando termina). Ordem trocada, igual o script legado sempre fez.
   netinstall::_issabel5_add_repos
   netinstall::_issabel5_prepare_system
+  netinstall::_issabel5_enable_php_remi
   netinstall::_issabel5_install_packages "$astver" "${addpkgs[@]}"
   netinstall::_issabel5_post_install
   netinstall::_issabel5_control_panel
@@ -258,6 +266,34 @@ netinstall::_issabel5_add_repos() {
   fi
 }
 
+# netinstall::_issabel5_enable_php_remi — port do passo centos8_tweaks do script legado
+# (github.com/phonevox/pissabel5): sem o repo Remi + módulo php:remi-7.4, o módulo php padrão
+# do AppStream (RHEL/Rocky 8) não tem php-imap/php-mcrypt/php-tidy (removidos do PHP core desde
+# o 7.x) — nem os pacotes que dependem deles (ex: php-PHPMailer, php-tcpdf). O raw sempre
+# rodou isto antes da lista de pacotes; o --custom nunca rodou, e por isso falhava com "No
+# match for argument" onde o raw funcionava. powertools/devel entram pelo mesmo motivo do
+# legado: dependências de build/dev de alguns pacotes Issabel/PHP vêm de lá, não do AppStream
+# base.
+#
+# `dnf module reset php -y` ANTES do enable, de propósito: se o stream padrão do módulo php
+# (7.2, AppStream) já foi tocado antes (ex: uma tentativa anterior desta instalação que morreu
+# no meio, ou qualquer dnf install php prévio), o dnf recusa a troca direta de stream com "It is
+# not possible to switch enabled streams of a module" — reset é sempre seguro mesmo quando o
+# módulo nunca foi habilitado (não-op nesse caso), e sem ele um retry nesta mesma máquina
+# quebraria de novo, agora num ponto diferente. Achado de verdade rodando isto de propósito numa
+# VPS que já tinha uma tentativa anterior (sem este fix) parcialmente instalada.
+netinstall::_issabel5_enable_php_remi() {
+  local major
+  major=$(os::version_major)
+  log::info 'netinstall issabel5: habilitando repo Remi + módulo php:remi-7.4 (RHEL/Rocky %s)...' "$major"
+  os::pkg_install "https://rpms.remirepo.net/enterprise/remi-release-${major}.rpm"
+  srun -- dnf module reset php -y
+  srun -- dnf module enable php:remi-7.4 -y
+  srun -- dnf config-manager --set-enabled remi
+  srun -- dnf config-manager --set-enabled powertools
+  srun -- dnf config-manager --set-enabled devel
+}
+
 netinstall::_issabel5_install_packages() {
   local astver=$1
   shift
@@ -309,7 +345,21 @@ netinstall::_issabel5_post_install() {
   if [[ -f /etc/asterisk/extensions_custom.conf.sample ]]; then
     run -- mv -f /etc/asterisk/extensions_custom.conf.sample /etc/asterisk/extensions_custom.conf
   fi
-  srun -- /usr/sbin/amportal chown
+  # `if run ...; then :; else ...; fi`, não uma chamada solta — /usr/sbin/amportal só existe
+  # depois do primeiro acesso ao wizard web do Issabel (que este netinstall não roda), então NÃO
+  # existir aqui é esperado, não um erro real. O legado (issabel5-netinstall.sh) faz a mesma
+  # chamada nos mesmos dois pontos e nunca notava a falha porque envolve tudo isto em
+  # "(...) &> /dev/null". Aqui, sob `set -e`, uma chamada solta a `run` (mesmo sem `srun`) ainda
+  # propaga o rc != 0 pro chamador e dispara o errexit — `run` só evita o `exit` interno de
+  # exec::_run_impl, não blinda quem chamou (mesmo padrão já usado logo abaixo, em
+  # _issabel5_set_passwords, pro issabel-admin-passwords). Achado de verdade: rodando --custom do
+  # zero numa VPS limpa, a instalação completa (repos, ~60 pacotes, control_panel, timezone,
+  # senhas) e só quebrava aqui, em algo que o próprio legado já tratava como best-effort.
+  if run -- /usr/sbin/amportal chown; then
+    :
+  else
+    log::debug 'netinstall issabel5: amportal chown falhou/indisponível (esperado sem o wizard web do Issabel) — ignorando'
+  fi
 }
 
 netinstall::_issabel5_control_panel() {
@@ -364,7 +414,21 @@ netinstall::_issabel5_set_passwords() {
 
 netinstall::_issabel5_finish() {
   run -- bash -c "rm -f /tmp/inst1.txt /tmp/inst2.txt"
-  srun -- /usr/sbin/amportal chown
+  # `if run ...; then :; else ...; fi`, não uma chamada solta — /usr/sbin/amportal só existe
+  # depois do primeiro acesso ao wizard web do Issabel (que este netinstall não roda), então NÃO
+  # existir aqui é esperado, não um erro real. O legado (issabel5-netinstall.sh) faz a mesma
+  # chamada nos mesmos dois pontos e nunca notava a falha porque envolve tudo isto em
+  # "(...) &> /dev/null". Aqui, sob `set -e`, uma chamada solta a `run` (mesmo sem `srun`) ainda
+  # propaga o rc != 0 pro chamador e dispara o errexit — `run` só evita o `exit` interno de
+  # exec::_run_impl, não blinda quem chamou (mesmo padrão já usado logo abaixo, em
+  # _issabel5_set_passwords, pro issabel-admin-passwords). Achado de verdade: rodando --custom do
+  # zero numa VPS limpa, a instalação completa (repos, ~60 pacotes, control_panel, timezone,
+  # senhas) e só quebrava aqui, em algo que o próprio legado já tratava como best-effort.
+  if run -- /usr/sbin/amportal chown; then
+    :
+  else
+    log::debug 'netinstall issabel5: amportal chown falhou/indisponível (esperado sem o wizard web do Issabel) — ignorando'
+  fi
   log::info 'netinstall issabel5: instalação concluída.'
   if (( ! ${PVX_FLAG_VALUE[reboot]:-1} )); then
     log::warn 'netinstall issabel5: --no-reboot passado — o servidor NÃO será reiniciado (faça isso manualmente)'

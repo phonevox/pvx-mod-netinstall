@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# modules/netinstall/lib/issabel4.sh — port de learning-materials/issabel-netinstall/
+# modules/netinstall/lib/issabel4.sh — port de github.com/phonevox/issabel-netinstall
 # (install.sh/settings.sh/utility.sh). Esse legado já era orientado a flags (sem `dialog`);
 # aqui ele ganha os mesmos hardenings de issabel5.sh (preflight, tmux, senha aleatória,
 # confirmação antes do reboot) e o parsing declarativo de lib/flags.sh em vez de um `case`
@@ -7,6 +7,14 @@
 # firewall próprio, backup engine custom, siptracer, zoxide, fix de monitoramento/
 # dialpatterns) não estão portadas — a flag existe e recusa com aviso claro em vez de
 # fingir que fez algo.
+#
+# Alvo real: CentOS 7 (`yum`, lista de pacotes da era pré-módulos-dnf, release=4 no repo
+# oficial do Issabel) — NÃO Rocky/RHEL 8 (esse é o issabel5). CentOS 7 chegou EOL em
+# 2024-06-30: netinstall::_issabel4_fix_eol_mirrors troca os mirrors mortos pro
+# vault.centos.org antes de qualquer yum/dnf tocar o sistema. Nada neste arquivo foi validado
+# numa CentOS 7 de verdade (nenhuma disponível no momento desta revisão) — os dois achados
+# (preflight bloqueando o próprio alvo real do produto, e "dnf clean all" hardcoded onde só
+# `yum` existe) vieram de leitura de código/comparação com o legado, não de teste ao vivo.
 
 NETINSTALL4_STUB_FLAGS='tema avaliacao firewall custom-backup-engine siptracer zoxide fix-monitoring-class fix-dialpatterns'
 
@@ -59,7 +67,7 @@ netinstall::run_issabel4() {
   local has_tty=0
   [[ -t 0 && -t 1 ]] && has_tty=1
 
-  netinstall::preflight issabel4
+  netinstall::preflight issabel4 7
   netinstall::_issabel4_warn_stub_flags
 
   local astver=''
@@ -159,7 +167,33 @@ netinstall::_issabel4_prepare_system() {
   fi
 }
 
+# netinstall::_issabel4_fix_eol_mirrors — CentOS 7 chegou EOL em 2024-06-30: mirrorlist.centos.org
+# não resolve mais pro release 7, então QUALQUER yum/dnf (nosso ou do próprio SO) falha logo no
+# primeiro comando, numa central recém-provisionada que nem chegou a instalar nada ainda. Troca
+# mirrorlist-> baseurl apontando pro vault.centos.org (arquivo oficial do projeto CentOS, é o
+# caminho documentado publicamente pra isso) em CentOS-Base.repo/epel.repo, se existirem. Só
+# roda em major==7 — não sabemos se um Rocky/Alma 7-like teria os mesmos arquivos, e não há
+# necessidade nenhuma disso em 8+ (mirrorlist.centos.org nem é usado lá). NÃO validado numa
+# CentOS 7 de verdade (sem uma disponível) — baseado no comportamento documentado do EOL e no
+# script legado (github.com/phonevox/issabel-netinstall), que já tinha uma flag manual
+# `--change-yum-mirrors` pro mesmo problema.
+netinstall::_issabel4_fix_eol_mirrors() {
+  local major
+  major=$(os::version_major)
+  [[ $major == 7 ]] || return 0
+  local f
+  for f in /etc/yum.repos.d/CentOS-Base.repo /etc/yum.repos.d/epel.repo; do
+    [[ -f $f ]] || continue
+    log::info 'netinstall issabel4: CentOS 7 é EOL (mirrorlist.centos.org morto) — apontando %s pro vault.centos.org...' "$f"
+    srun -- sed -i \
+      -e 's/^mirrorlist=/#mirrorlist=/' \
+      -e 's/^#baseurl=http:\/\/mirror.centos.org/baseurl=http:\/\/vault.centos.org/' \
+      "$f"
+  done
+}
+
 netinstall::_issabel4_add_repos() {
+  netinstall::_issabel4_fix_eol_mirrors
   log::info 'netinstall issabel4: adicionando repositórios do Issabel 4...'
   local repo_dir="$PVX_MODULE_DIR/config/repos4"
   if [[ -d $repo_dir ]]; then
@@ -178,7 +212,13 @@ netinstall::_issabel4_install_packages() {
   local -a base issabel
   mapfile -t base <"$PVX_MODULE_DIR/lib/packages/issabel4-base.txt"
   mapfile -t issabel < <(netinstall::render_astver_placeholder "$PVX_MODULE_DIR/lib/packages/issabel4-issabel.txt" "$astver")
-  srun -- dnf clean all
+  # `os::pkg_manager`, não "dnf" hardcoded — CentOS 7 (alvo real do issabel4) só tem `yum`, o
+  # `dnf` só virou padrão a partir do 8. Achado de verdade por leitura de código (sem CentOS 7
+  # disponível pra testar): esta linha vinha copiada do padrão do issabel5.sh (que roda em RHEL8+,
+  # onde dnf sempre existe) sem adaptar pro gerenciador de pacotes real do issabel4.
+  local mgr
+  mgr=$(os::pkg_manager) || { log::error 'netinstall issabel4: nenhum gerenciador de pacotes conhecido encontrado'; exit "$PVX_EXIT_UNAVAILABLE"; }
+  srun -- "$mgr" clean all
   netinstall::install_packages 'pacotes base' "${base[@]}"
   netinstall::install_packages 'pacotes Issabel + Asterisk + extras' "${issabel[@]}" ${extra[@]+"${extra[@]}"}
 }
@@ -217,7 +257,16 @@ netinstall::_issabel4_post_install() {
   if [[ -f /etc/asterisk/extensions_custom.conf.sample ]]; then
     run -- mv -f /etc/asterisk/extensions_custom.conf.sample /etc/asterisk/extensions_custom.conf
   fi
-  srun -- /usr/sbin/amportal chown
+  # `if run ...; then :; else ...; fi`, não uma chamada solta — mesmo achado do issabel5.sh (ver
+  # comentário lá): /usr/sbin/amportal só existe depois do primeiro acesso ao wizard web do
+  # Issabel (que este netinstall não roda), então NÃO existir aqui é esperado. `run` sozinho não
+  # basta pra evitar o abort: sob `set -e`, uma chamada solta que retorna rc != 0 ainda dispara o
+  # errexit no chamador, mesmo com `run` (que só evita o `exit` interno de exec::_run_impl).
+  if run -- /usr/sbin/amportal chown; then
+    :
+  else
+    log::debug 'netinstall issabel4: amportal chown falhou/indisponível (esperado sem o wizard web do Issabel) — ignorando'
+  fi
 
   local files_dir="$PVX_MODULE_DIR/config/files4"
   if [[ -f $files_dir/manager.conf.sample ]]; then
@@ -264,7 +313,16 @@ netinstall::_issabel4_set_passwords() {
 
 netinstall::_issabel4_finish() {
   run -- bash -c "rm -f /tmp/inst1.txt /tmp/inst2.txt"
-  srun -- /usr/sbin/amportal chown
+  # `if run ...; then :; else ...; fi`, não uma chamada solta — mesmo achado do issabel5.sh (ver
+  # comentário lá): /usr/sbin/amportal só existe depois do primeiro acesso ao wizard web do
+  # Issabel (que este netinstall não roda), então NÃO existir aqui é esperado. `run` sozinho não
+  # basta pra evitar o abort: sob `set -e`, uma chamada solta que retorna rc != 0 ainda dispara o
+  # errexit no chamador, mesmo com `run` (que só evita o `exit` interno de exec::_run_impl).
+  if run -- /usr/sbin/amportal chown; then
+    :
+  else
+    log::debug 'netinstall issabel4: amportal chown falhou/indisponível (esperado sem o wizard web do Issabel) — ignorando'
+  fi
   log::info 'netinstall issabel4: instalação concluída.'
   if (( ! ${PVX_FLAG_VALUE[reboot]:-1} )); then
     log::warn 'netinstall issabel4: --no-reboot passado — o servidor NÃO será reiniciado (faça isso manualmente)'

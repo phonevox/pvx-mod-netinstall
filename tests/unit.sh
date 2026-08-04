@@ -170,31 +170,36 @@ else
   _FAIL=$((_FAIL + 1))
 fi
 
-# --- run_issabel5: dispatch --custom vs raw (padrão), sem tocar em git/rede de verdade --------
+# --- run_issabel5: dispatch pvx (padrão) vs --legacy (raw), sem tocar em git/rede de verdade ---
 # Mocka os dois fluxos de verdade (_issabel5_raw/_issabel5_custom) só pra provar o ROTEAMENTO
 # — a lógica de cada um já é testada/smoke-testada em outro lugar (ver README.md).
 netinstall::_issabel5_raw() { printf 'raw:%s\n' "$*"; }
 netinstall::_issabel5_custom() { printf 'custom:%s\n' "$*"; }
 
 out=$(netinstall::run_issabel5 --no-tmux)
-assert_eq 'run_issabel5 sem --custom: roteia pro fluxo raw (padrão)' 'raw:--no-tmux' "$out"
+assert_eq 'run_issabel5 sem --legacy: roteia pro fluxo pvx (padrão)' 'custom:--no-tmux' "$out"
 
-out=$(netinstall::run_issabel5 --custom --astver 18)
-assert_eq 'run_issabel5 com --custom: roteia pro fluxo pvx, repassando os args' \
-  'custom:--custom --astver 18' "$out"
+out=$(netinstall::run_issabel5 --legacy --astver 18)
+assert_eq 'run_issabel5 com --legacy: roteia pro fluxo raw, repassando os args' \
+  'raw:--legacy --astver 18' "$out"
 
 out=$(netinstall::run_issabel5 --help)
-if [[ $out == *'baixa e executa o instalador raw'* ]]; then
-  printf '  ok - run_issabel5 --help (sem --custom): mostra o uso mínimo do modo raw\n'
+if [[ $out == *'custom:--help'* ]]; then
+  printf '  ok - run_issabel5 --help (sem --legacy): cai pro fluxo pvx (padrão)\n'
   _PASS=$((_PASS + 1))
 else
-  printf '  FALHOU - run_issabel5 --help deveria mostrar o uso do modo raw: [%s]\n' "$out" >&2
+  printf '  FALHOU - run_issabel5 --help deveria cair pro fluxo pvx: [%s]\n' "$out" >&2
   _FAIL=$((_FAIL + 1))
 fi
 
-out=$(netinstall::run_issabel5 --custom --help)
-assert_eq 'run_issabel5 --custom --help: não mostra o uso do raw, cai pro fluxo pvx' \
-  'custom:--custom --help' "$out"
+out=$(netinstall::run_issabel5 --legacy --help)
+if [[ $out == *'baixa e executa o instalador raw'* ]]; then
+  printf '  ok - run_issabel5 --legacy --help: mostra o uso mínimo do modo raw\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - run_issabel5 --legacy --help deveria mostrar o uso do modo raw: [%s]\n' "$out" >&2
+  _FAIL=$((_FAIL + 1))
+fi
 
 unset -f netinstall::_issabel5_raw netinstall::_issabel5_custom
 

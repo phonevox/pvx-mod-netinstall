@@ -30,15 +30,25 @@ netinstall::_mem_total_kb() {
   printf '%s' "$((mem_total + swap_total))"
 }
 
-# netinstall::preflight <produto> — bloqueia cedo em vez de deixar o `dnf install` de ~600
-# pacotes falhar 20 minutos depois. Cada checagem já loga o motivo específico antes de sair.
+# netinstall::preflight <produto> <min_version> — bloqueia cedo em vez de deixar o `dnf/yum
+# install` de centenas de pacotes falhar 20 minutos depois. Cada checagem já loga o motivo
+# específico antes de sair.
+#
+# <min_version> é OBRIGATÓRIO (sem default) de propósito: issabel4 (CentOS 7, yum, sem
+# módulos dnf) e issabel5 (Rocky/RHEL 8+, dnf, módulo php:remi-7.4) têm alvos de SO
+# DIFERENTES — um valor hardcoded aqui (achado de verdade: era "8" fixo pros dois) bloqueava o
+# issabel4 pra sempre no PRÓPRIO SO alvo dele ("requer versão >= 8, detectado 7"), já que
+# ninguém nunca chega a rodar isto numa CentOS 8+ de verdade (o port dele nunca foi adaptado
+# pra AppStream/módulos — teria os mesmos "No match for argument" do issabel5, só que sem o
+# equivalente ao centos8_tweaks). Cada produto passa o próprio mínimo (ver
+# netinstall::run_issabel4/_issabel5_raw/_issabel5_custom).
 netinstall::preflight() {
-  local produto=$1
+  local produto=$1 min_version=${2:?netinstall::preflight: min_version não informado}
 
   os::require_root "netinstall $produto"
 
   os::require_rhel_like "netinstall $produto" || exit "$PVX_EXIT_UNSUPPORTED"
-  os::require_min_version 8 "netinstall $produto" || exit "$PVX_EXIT_UNSUPPORTED"
+  os::require_min_version "$min_version" "netinstall $produto" || exit "$PVX_EXIT_UNSUPPORTED"
 
   if os::is_container; then
     log::warn 'netinstall: rodando dentro de um container (%s) — systemd/firewalld/reboot podem se comportar de forma diferente de uma máquina real' \

@@ -24,17 +24,15 @@ pvx modules install git@github.com:phonevox/pvx-mod-netinstall.git
 
 ## Uso
 
-**`issabel5` tem dois modos.** Por padrão (`pvx netinstall issabel5`, sem flag nenhuma), baixa
-e executa o instalador RAW original (`github.com/phonevox/pissabel5`), sem nenhuma modificação
-— o mesmo wizard `dialog` de sempre, sem flags/upfront do pvx. Isso é temporário: o fluxo
-próprio do pvx (abaixo) tem problemas de resolução de pacote em algumas VPS (`issabel-framework`
-dependendo de `php-imap`/`php-mcrypt` que não existem em certos mirrors) ainda sendo
-investigados — enquanto isso não é resolvido, o raw é o caminho comprovado. O código do fluxo
-pvx continua todo aí, disponível via `--custom`:
+**`issabel5` tem dois modos.** Por padrão (`pvx netinstall issabel5`, sem flag nenhuma), usa o
+fluxo próprio do pvx (flags, prompts, resumo antes de confirmar — ver abaixo). O instalador RAW
+original (`github.com/phonevox/pissabel5`, sem nenhuma modificação, o mesmo wizard `dialog` de
+sempre, sem flags/upfront do pvx) fica disponível via `--legacy`, pra quem prefere o caminho
+100% interativo de sempre:
 
 ```sh
-pvx netinstall issabel5                    # padrão: baixa e roda o instalador raw (dialog)
-pvx netinstall issabel5 --custom --astver 18
+pvx netinstall issabel5 --astver 18        # padrão: fluxo próprio do pvx
+pvx netinstall issabel5 --legacy           # baixa e roda o instalador raw (dialog)
 pvx netinstall issabel4 --astver 16 --addpkgs licensed --addpkgs community-blocklist \
   --sql-password-file /root/.netinstall-sql --web-password-file /root/.netinstall-web
 pvx            # menu interativo: netinstall > issabel5/issabel4
@@ -43,13 +41,14 @@ pvx            # menu interativo: netinstall > issabel5/issabel4
 `issabel4` não tem os dois modos — só o fluxo pvx de sempre (é o legado que já era orientado a
 flags, sem `dialog`).
 
-Rode `pvx netinstall issabel5 --custom --help` / `pvx netinstall issabel4 --help` pra ver
-todas as flags do fluxo pvx (senha, timezone, idioma, `--no-tmux`, `--no-reboot`, `--force`,
-`--dry-run`, `--yes`). O modo raw do issabel5 não aceita flag nenhuma (é 100% interativo).
+Rode `pvx netinstall issabel5 --help` / `pvx netinstall issabel4 --help` pra ver todas as
+flags do fluxo pvx (senha, timezone, idioma, `--no-tmux`, `--no-reboot`, `--force`,
+`--dry-run`, `--yes`). O modo `--legacy` do issabel5 não aceita flag nenhuma (é 100%
+interativo).
 
 **Atenção**: desativa SELinux/firewalld e reinicia o servidor ao final. Só rode contra uma
-máquina descartável/recém-provisionada — o fluxo `--custom` se recusa a rodar se já detectar
-um Issabel/Asterisk instalado, a menos que `--force` seja passado (o modo raw não tem essa
+máquina descartável/recém-provisionada — o fluxo padrão se recusa a rodar se já detectar um
+Issabel/Asterisk instalado, a menos que `--force` seja passado (o modo `--legacy` não tem essa
 checagem — é o script legado original).
 
 ## Escopo desta versão
