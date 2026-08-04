@@ -132,6 +132,22 @@ else
   _FAIL=$((_FAIL + 1))
 fi
 
+# --- ssh_validate_pubkey ------------------------------------------------------------------------
+assert_rc 'ssh_validate_pubkey: aceita ssh-ed25519 válida' 0 \
+  netinstall::ssh_validate_pubkey 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIENL7w74yOns+ql0/Ynt/jrpOP+vCc5jN0fHLWEzkRx9 claude-code-vps'
+assert_rc 'ssh_validate_pubkey: aceita ssh-rsa válida' 0 \
+  netinstall::ssh_validate_pubkey 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7 comentario'
+assert_rc 'ssh_validate_pubkey: aceita ecdsa-sha2-nistp256 válida' 0 \
+  netinstall::ssh_validate_pubkey 'ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY='
+assert_rc 'ssh_validate_pubkey: aceita sem comentário' 0 \
+  netinstall::ssh_validate_pubkey 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIENL7w=='
+assert_rc 'ssh_validate_pubkey: rejeita string vazia' 1 \
+  netinstall::ssh_validate_pubkey ''
+assert_rc 'ssh_validate_pubkey: rejeita texto solto' 1 \
+  netinstall::ssh_validate_pubkey 'isso não é uma chave'
+assert_rc 'ssh_validate_pubkey: rejeita chave privada (prefixo errado)' 1 \
+  netinstall::ssh_validate_pubkey '-----BEGIN OPENSSH PRIVATE KEY-----'
+
 # --- install_packages: tenta a lista inteira num único dnf install ----------------------------
 # Grava a chamada num arquivo, não num array: `out=$(...)` roda install_packages numa subshell,
 # e mutações de array feitas ali dentro (via os::pkg_install) não voltam pro shell principal —

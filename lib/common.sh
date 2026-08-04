@@ -328,6 +328,28 @@ netinstall::gen_password() {
   printf '\n'
 }
 
+# netinstall::ssh_validate_pubkey <linha> — só valida o FORMATO (tipo + base64 + comentário
+# opcional), não a chave em si.
+netinstall::ssh_validate_pubkey() {
+  local line=$1
+  [[ $line =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9]+)[[:space:]]+[A-Za-z0-9+/]+=*([[:space:]].*)?$ ]]
+}
+
+# netinstall::sshd_config_upsert <arquivo> <diretiva> <valor> — garante uma linha canônica
+# "<diretiva> <valor>" no final do arquivo (sshd respeita a última ocorrência ativa);
+# idempotente, comenta qualquer ocorrência ativa anterior em vez de apagar.
+netinstall::sshd_config_upsert() {
+  local file=$1 directive=$2 value=$3
+  [[ -w $file ]] || return 1
+
+  local last_active
+  last_active=$(grep -E "^[[:space:]]*${directive}[[:space:]]" "$file" | tail -n1)
+  [[ $last_active == "$directive $value" ]] && return 0
+
+  sed -i -E "s/^([[:space:]]*)(${directive}[[:space:]].*)/\1# disabled by pvx netinstall ssh-hardening: \2/" "$file"
+  printf '%s %s\n' "$directive" "$value" >>"$file"
+}
+
 # netinstall::save_credentials <produto> <sql_password> <web_password> — grava uma única vez
 # em $PVX_MODULE_STATE_DIR (0600) e devolve o caminho — é a única cópia recuperável depois que
 # a tela rolar.
