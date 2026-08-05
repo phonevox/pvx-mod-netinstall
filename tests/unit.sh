@@ -123,6 +123,60 @@ assert_eq '_mem_total_kb soma MemTotal + SwapTotal (KB)' \
 assert_eq '_mem_total_kb devolve 0 se o arquivo não existir (nunca bloqueia por um sinal que não existe)' \
   '0' "$(netinstall::_mem_total_kb "$(pvx::tmpdir)/nao-existe-meminfo")"
 
+# --- catálogo: ssh-hardening está registrado pro issabel5, default ON -------------------------
+if netinstall::_tweaks_catalog | grep -q '^ssh-hardening	issabel5	1	'; then
+  printf '  ok - catálogo registra ssh-hardening pro issabel5, default ON\n'
+  _PASS=$((_PASS + 1))
+else
+  printf '  FALHOU - catálogo deveria ter uma linha ssh-hardening/issabel5/1/...\n' >&2
+  _FAIL=$((_FAIL + 1))
+fi
+
+# --- ssh_validate_pubkey ------------------------------------------------------------------------
+assert_rc 'ssh_validate_pubkey: aceita ssh-ed25519 válida' 0 \
+  netinstall::ssh_validate_pubkey 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIENL7w74yOns+ql0/Ynt/jrpOP+vCc5jN0fHLWEzkRx9 claude-code-vps'
+assert_rc 'ssh_validate_pubkey: aceita ssh-rsa válida' 0 \
+  netinstall::ssh_validate_pubkey 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7 comentario'
+assert_rc 'ssh_validate_pubkey: aceita ecdsa-sha2-nistp256 válida' 0 \
+  netinstall::ssh_validate_pubkey 'ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY='
+assert_rc 'ssh_validate_pubkey: aceita sem comentário' 0 \
+  netinstall::ssh_validate_pubkey 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIENL7w=='
+assert_rc 'ssh_validate_pubkey: rejeita string vazia' 1 \
+  netinstall::ssh_validate_pubkey ''
+assert_rc 'ssh_validate_pubkey: rejeita texto solto' 1 \
+  netinstall::ssh_validate_pubkey 'isso não é uma chave'
+assert_rc 'ssh_validate_pubkey: rejeita chave privada (prefixo errado)' 1 \
+  netinstall::ssh_validate_pubkey '-----BEGIN OPENSSH PRIVATE KEY-----'
+
+# --- sshd_config_upsert -----------------------------------------------------------------------
+sshd_fixture=$(pvx::tmpdir)/sshd_config-fixture
+cat >"$sshd_fixture" <<'EOF'
+#Port 22
+#PermitRootLogin prohibit-password
+Subsystem sftp /usr/libexec/openssh/sftp-server
+EOF
+
+netinstall::sshd_config_upsert "$sshd_fixture" Port 21122
+assert_eq 'sshd_config_upsert: acrescenta a diretiva quando só existe comentada' \
+  'Port 21122' "$(grep -E '^Port ' "$sshd_fixture" | tail -n1)"
+
+netinstall::sshd_config_upsert "$sshd_fixture" Port 21122
+assert_eq 'sshd_config_upsert: rodar de novo com o mesmo valor não duplica' \
+  '1' "$(grep -cE '^Port ' "$sshd_fixture")"
+
+netinstall::sshd_config_upsert "$sshd_fixture" Port 2222
+assert_eq 'sshd_config_upsert: trocar o valor comenta a antiga e acrescenta a nova' \
+  'Port 2222' "$(grep -E '^Port ' "$sshd_fixture" | tail -n1)"
+assert_eq 'sshd_config_upsert: a linha antiga fica comentada, não apagada' \
+  '1' "$(grep -c 'disabled.*Port 21122' "$sshd_fixture")"
+
+netinstall::sshd_config_upsert "$sshd_fixture" PermitRootLogin no
+assert_eq 'sshd_config_upsert: funciona pra outra diretiva (PermitRootLogin)' \
+  'PermitRootLogin no' "$(grep -E '^PermitRootLogin ' "$sshd_fixture" | tail -n1)"
+
+assert_rc 'sshd_config_upsert: erro se o arquivo não existe/não é gravável' 1 \
+  netinstall::sshd_config_upsert "$(pvx::tmpdir)/nao-existe-sshd-config" Port 22
+
 # --- install_packages: tenta a lista inteira num único dnf install ----------------------------
 # Grava a chamada num arquivo, não num array: `out=$(...)` roda install_packages numa subshell,
 # e mutações de array feitas ali dentro (via os::pkg_install) não voltam pro shell principal —
@@ -220,6 +274,178 @@ else
   printf '  FALHOU - duas chamadas de gen_password devolveram a mesma senha: [%s]\n' "$pw1" >&2
   _FAIL=$((_FAIL + 1))
 fi
+
+# --- save_credentials: pares extra key=value opcionais, sem quebrar a chamada de 3 args --------
+export PVX_MODULE_STATE_DIR=$(pvx::tmpdir)/state-test
+cred_file=$(netinstall::save_credentials teste sqlpw123 webpw456)
+assert_eq 'save_credentials: chamada com 3 args (sem extra) continua funcionando' \
+  '0' "$(grep -c '^ssh_' "$cred_file")"
+
+cred_file2=$(netinstall::save_credentials teste sqlpw123 webpw456 'ssh_user=phonevox' 'ssh_port=21122')
+assert_eq 'save_credentials: primeiro par extra aparece no arquivo' \
+  '1' "$(grep -c '^ssh_user=phonevox$' "$cred_file2")"
+assert_eq 'save_credentials: segundo par extra também aparece' \
+  '1' "$(grep -c '^ssh_port=21122$' "$cred_file2")"
+assert_eq 'save_credentials: campos originais continuam presentes com extras' \
+  '1' "$(grep -c '^mysql_root_password=sqlpw123$' "$cred_file2")"
+
+# --- print_summary: 5º parâmetro opcional aparece só quando não-vazio -------------------------
+out=$(netinstall::print_summary issabel5 18 nenhum ssh-hardening 2>&1 >/dev/null)
+assert_eq 'print_summary: chamada de 4 args (sem extra) continua funcionando' \
+  '0' "$(printf '%s' "$out" | grep -c 'Porta SSH')"
+
+out2=$(netinstall::print_summary issabel5 18 nenhum ssh-hardening $'  Porta SSH: 21122' 2>&1 >/dev/null)
+assert_eq 'print_summary: extra não-vazio aparece no resumo' \
+  '1' "$(printf '%s' "$out2" | grep -c 'Porta SSH: 21122')"
+
+# --- ssh_hardening_ask: caminho 100% via flags (determinístico, sem TTY) -----------------------
+ssh_hardening_ask_vars() {
+  # roda ssh_hardening_ask isolado e imprime as SSH_HARDEN_* pra fora (subshell — só leitura).
+  # USER_PW_SET (0|1), não o tamanho: netinstall::gen_password tem tamanho VARIÁVEL entre
+  # chamadas (confirmado: uma chamada real deu 19 chars, não sempre 24) — comparar tamanho
+  # exato flakaria.
+  local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
+    SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
+    SSH_HARDEN_PORT
+  netinstall::ssh_hardening_ask 0
+  local user_pw_set=0
+  [[ -n $SSH_HARDEN_USER_PASSWORD ]] && user_pw_set=1
+  printf 'LOCK_ROOT=%s ROOT_PW=%s CREATE_USER=%s USERNAME=%s PUBKEY=%s ALLOW_PW=%s USER_PW_SET=%s CHANGE_PORT=%s PORT=%s\n' \
+    "$SSH_HARDEN_LOCK_ROOT" "$SSH_HARDEN_ROOT_PASSWORD" "$SSH_HARDEN_CREATE_USER" "$SSH_HARDEN_USERNAME" \
+    "$SSH_HARDEN_PUBKEY" "$SSH_HARDEN_ALLOW_PASSWORD" "$user_pw_set" "$SSH_HARDEN_CHANGE_PORT" "$SSH_HARDEN_PORT"
+}
+
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse >/dev/null 2>&1
+out=$(ssh_hardening_ask_vars)
+assert_eq 'ssh_hardening_ask: sem TTY e sem NENHUMA flag --tweak-ssh-*, tudo fica desligado (0)' \
+  'LOCK_ROOT=0 ROOT_PW= CREATE_USER=0 USERNAME= PUBKEY= ALLOW_PW=0 USER_PW_SET=0 CHANGE_PORT=0 PORT=' "$out"
+
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-lock-root --tweak-ssh-root-password 'senha123' \
+  --tweak-ssh-create-user --tweak-ssh-username phonevox \
+  --tweak-ssh-pubkey 'ssh-ed25519 AAAAtest x' \
+  --tweak-ssh-allow-password --tweak-ssh-change-port --tweak-ssh-port 2222 >/dev/null 2>&1
+out=$(ssh_hardening_ask_vars)
+assert_eq 'ssh_hardening_ask: com flags explícitas, resolve tudo sem perguntar (senha custom)' \
+  'LOCK_ROOT=1 ROOT_PW=senha123 CREATE_USER=1 USERNAME=phonevox PUBKEY=ssh-ed25519 AAAAtest x ALLOW_PW=1 USER_PW_SET=1 CHANGE_PORT=1 PORT=2222' "$out"
+
+# NOTA: passa --tweak-ssh-pubkey mesmo só querendo testar --tweak-ssh-lock-root — create-user
+# também cai no próprio default (1) por não ter flag própria, e default 1 exige pubkey (mesma
+# regra de sempre); omitir a flag aqui faria a função sair com PVX_EXIT_USAGE, não com o
+# resultado esperado abaixo.
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-lock-root --tweak-ssh-pubkey 'ssh-ed25519 AAAAtest x' >/dev/null 2>&1
+out=$(ssh_hardening_ask_vars)
+assert_eq 'ssh_hardening_ask: 1 flag dada ativa "resolve com defaults" pros itens sem flag própria' \
+  'LOCK_ROOT=1 ROOT_PW=phonevox@@ CREATE_USER=1 USERNAME=phonevox PUBKEY=ssh-ed25519 AAAAtest x ALLOW_PW=0 USER_PW_SET=0 CHANGE_PORT=1 PORT=21122' "$out"
+
+# --- ssh_hardening_ask: create_user=1 sem --tweak-ssh-pubkey e sem TTY = erro claro ------------
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-create-user >/dev/null 2>&1
+assert_rc 'ssh_hardening_ask: create_user sem --tweak-ssh-pubkey e sem TTY sai com PVX_EXIT_USAGE' \
+  "$PVX_EXIT_USAGE" bash -c '
+    source "$PVX_LIB_DIR/bootstrap.sh"
+    pvx::require color log os exec tui flags net
+    color::init; log::init
+    source "$PVX_MODULE_DIR/lib/common.sh"
+    flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+    flag::parse --tweak-ssh-create-user
+    local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
+      SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
+      SSH_HARDEN_PORT
+    netinstall::ssh_hardening_ask 0
+  '
+
+# --- ssh_hardening_ask: username/porta inválidos são rejeitados mesmo vindo de flag ------------
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-username '../etc/passwd' --tweak-ssh-pubkey 'ssh-ed25519 AAAA x' >/dev/null 2>&1
+assert_rc 'ssh_hardening_ask: --tweak-ssh-username inválido sai com PVX_EXIT_USAGE' \
+  "$PVX_EXIT_USAGE" bash -c '
+    source "$PVX_LIB_DIR/bootstrap.sh"
+    pvx::require color log os exec tui flags net
+    color::init; log::init
+    source "$PVX_MODULE_DIR/lib/common.sh"
+    flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+    flag::parse --tweak-ssh-username "../etc/passwd" --tweak-ssh-pubkey "ssh-ed25519 AAAA x"
+    local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
+      SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
+      SSH_HARDEN_PORT
+    netinstall::ssh_hardening_ask 0
+  '
+
+flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+flag::parse --tweak-ssh-port 999999 --tweak-ssh-pubkey 'ssh-ed25519 AAAA x' >/dev/null 2>&1
+# --tweak-ssh-pubkey precisa vir junto: create-user cai no próprio default (1) por não ter
+# flag própria, e SEM pubkey a função já sairia com PVX_EXIT_USAGE antes de chegar na
+# validação de porta — "passaria" pelo motivo errado, sem nunca exercitar o código de porta.
+assert_rc 'ssh_hardening_ask: --tweak-ssh-port fora do range 1-65535 sai com PVX_EXIT_USAGE' \
+  "$PVX_EXIT_USAGE" bash -c '
+    source "$PVX_LIB_DIR/bootstrap.sh"
+    pvx::require color log os exec tui flags net
+    color::init; log::init
+    source "$PVX_MODULE_DIR/lib/common.sh"
+    flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
+    flag::parse --tweak-ssh-port 999999 --tweak-ssh-pubkey "ssh-ed25519 AAAA x"
+    local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
+      SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
+      SSH_HARDEN_PORT
+    netinstall::ssh_hardening_ask 0
+  '
+unset -f ssh_hardening_ask_vars
+
+# --- ssh_hardening_apply: mocks de useradd/usermod/chpasswd/id/getent/sshd, tudo em tmpdir -----
+SSH_APPLY_CALLS=$(pvx::tmpdir)/ssh-apply-calls.txt
+FAKE_HOME=$(pvx::tmpdir)/fake-home-phonevox
+useradd() { printf 'useradd:%s\n' "$*" >>"$SSH_APPLY_CALLS"; }
+usermod() { printf 'usermod:%s\n' "$*" >>"$SSH_APPLY_CALLS"; }
+chpasswd() { printf 'chpasswd\n' >>"$SSH_APPLY_CALLS"; }
+id() { return 1; }
+getent() { printf 'x:x:1000:1000:x:%s:/bin/bash\n' "$FAKE_HOME"; }
+sshd() { return 0; }
+chown() { :; }  # evita "invalid user" tentando chown pra um usuário phonevox que não existe de verdade
+export -f useradd usermod chpasswd id getent sshd chown
+
+: >"$SSH_APPLY_CALLS"
+netinstall::ssh_hardening_apply 0 '' 0 '' '' 0 '' 0 '' "$(pvx::tmpdir)/sshd-noop.conf"
+assert_eq 'ssh_hardening_apply: com os 3 desligados, não chama nada e não toca no sshd_config' \
+  '' "$(cat "$SSH_APPLY_CALLS")"
+
+: >"$SSH_APPLY_CALLS"
+apply_sshd=$(pvx::tmpdir)/sshd-apply.conf
+printf '#PermitRootLogin prohibit-password\n#Port 22\n' >"$apply_sshd"
+netinstall::ssh_hardening_apply 1 rootpw123 1 phonevox 'ssh-ed25519 AAAA test' 1 userpw456 1 21122 "$apply_sshd"
+
+assert_eq 'ssh_hardening_apply: cria o usuário quando id() diz que não existe' \
+  '1' "$(grep -c '^useradd:' "$SSH_APPLY_CALLS")"
+assert_eq 'ssh_hardening_apply: chpasswd chamado 2x (root + usuário, allow_pw=1)' \
+  '2' "$(grep -c '^chpasswd$' "$SSH_APPLY_CALLS")"
+assert_eq 'ssh_hardening_apply: PermitRootLogin no aplicado' \
+  'PermitRootLogin no' "$(grep -E '^PermitRootLogin ' "$apply_sshd" | tail -n1)"
+assert_eq 'ssh_hardening_apply: Port 21122 aplicado' \
+  'Port 21122' "$(grep -E '^Port ' "$apply_sshd" | tail -n1)"
+assert_eq 'ssh_hardening_apply: chave pública acrescentada ao authorized_keys' \
+  '1' "$(grep -c 'ssh-ed25519 AAAA test' "$FAKE_HOME/.ssh/authorized_keys" 2>/dev/null || printf 0)"
+
+# idempotência: rodar de novo (usuário "já existe" agora) não duplica a chave nem chama useradd
+: >"$SSH_APPLY_CALLS"
+id() { return 0; }
+netinstall::ssh_hardening_apply 1 rootpw123 1 phonevox 'ssh-ed25519 AAAA test' 1 userpw456 1 21122 "$apply_sshd"
+assert_eq 'ssh_hardening_apply: rodar de novo (usuário já existe) não chama useradd de novo' \
+  '0' "$(grep -c '^useradd:' "$SSH_APPLY_CALLS")"
+assert_eq 'ssh_hardening_apply: rodar de novo não duplica a chave no authorized_keys' \
+  '1' "$(grep -c 'ssh-ed25519 AAAA test' "$FAKE_HOME/.ssh/authorized_keys")"
+
+# sshd -t falha => restaura o backup, não deixa o sshd_config quebrado no lugar
+: >"$SSH_APPLY_CALLS"
+sshd() { return 1; }
+apply_sshd_bad=$(pvx::tmpdir)/sshd-apply-bad.conf
+printf '#Port 22\n' >"$apply_sshd_bad"
+netinstall::ssh_hardening_apply 0 '' 0 '' '' 0 '' 1 21122 "$apply_sshd_bad"
+assert_eq 'ssh_hardening_apply: sshd -t falhando restaura o backup (Port volta a não estar ativo)' \
+  '0' "$(grep -cE '^Port 21122' "$apply_sshd_bad")"
+
+unset -f useradd usermod chpasswd id getent sshd chown
 
 # --- ask_password: sem TTY (caso deste próprio runner de testes) nunca trava, sempre devolve ---
 # --- algo pronto pra uso, e nunca escreve o valor gerado em stdout misturado com o prompt ------

@@ -204,7 +204,7 @@ netinstall::resolve_secret_or_ask() {
 # fora da tela ou veio só de flag, nunca visível junto. Vai pra stderr (igual ao resto dos
 # prompts do menu), não por log:: — é uma tela de revisão, não um evento de log.
 netinstall::print_summary() {
-  local produto=$1 astver=$2 addpkgs_display=$3 tweaks_display=${4:-nenhum}
+  local produto=$1 astver=$2 addpkgs_display=$3 tweaks_display=${4:-nenhum} extra=${5:-}
   local tz lang
   tz=$(flag::get timezone 'America/Sao_Paulo')
   lang=$(flag::get lang pt_BR)
@@ -215,6 +215,7 @@ netinstall::print_summary() {
   printf '  Timezone: %s\n' "$tz" >&2
   printf '  Idioma: %s\n' "$lang" >&2
   printf '  Senhas (MySQL/Web): definidas\n' >&2
+  [[ -n $extra ]] && printf '%s\n' "$extra" >&2
   printf '\n' >&2
 }
 
@@ -225,6 +226,7 @@ netinstall::print_summary() {
 netinstall::_tweaks_catalog() {
   cat <<'EOF'
 operator-panel	issabel5	1	Painel do operador (control_panel — visão de recepção/switchboard)
+ssh-hardening	issabel5	1	Hardening de acesso SSH (bloqueia root, cria usuário admin dedicado, muda porta)
 EOF
 }
 
@@ -327,11 +329,38 @@ netinstall::gen_password() {
   printf '\n'
 }
 
+# netinstall::ssh_validate_pubkey <linha> — só valida o FORMATO (tipo + base64 + comentário
+# opcional), não a chave em si.
+netinstall::ssh_validate_pubkey() {
+  local line=$1
+  [[ $line =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9]+)[[:space:]]+[A-Za-z0-9+/]+=*([[:space:]].*)?$ ]]
+}
+
+# netinstall::sshd_config_upsert <arquivo> <diretiva> <valor> — garante uma linha canônica
+# "<diretiva> <valor>" no final do arquivo (sshd respeita a última ocorrência ativa);
+# idempotente, comenta qualquer ocorrência ativa anterior em vez de apagar.
+netinstall::sshd_config_upsert() {
+  local file=$1 directive=$2 value=$3
+  [[ -w $file ]] || return 1
+
+  local last_active
+  # `|| true`: grep sem match (diretiva ainda não existe ativa — caso comum) sai com rc=1, que
+  # sob `set -e`+`pipefail` mataria o script inteiro numa simples atribuição de variável.
+  last_active=$(grep -E "^[[:space:]]*${directive}[[:space:]]" "$file" | tail -n1) || true
+  [[ $last_active == "$directive $value" ]] && return 0
+
+  sed -i -E "s/^([[:space:]]*)(${directive}[[:space:]].*)/\1# disabled by pvx netinstall ssh-hardening: \2/" "$file"
+  printf '%s %s\n' "$directive" "$value" >>"$file"
+}
+
 # netinstall::save_credentials <produto> <sql_password> <web_password> — grava uma única vez
 # em $PVX_MODULE_STATE_DIR (0600) e devolve o caminho — é a única cópia recuperável depois que
 # a tela rolar.
 netinstall::save_credentials() {
-  local produto=$1 sql_pw=$2 web_pw=$3 dir file ts
+  local produto=$1 sql_pw=$2 web_pw=$3
+  shift 3
+  local -a extra=("$@")
+  local dir file ts kv
   dir=${PVX_MODULE_STATE_DIR:?PVX_MODULE_STATE_DIR não definido}
   mkdir -p "$dir"
   printf -v ts '%(%Y%m%dT%H%M%S)T' -1
@@ -341,6 +370,9 @@ netinstall::save_credentials() {
     printf 'data=%s\n' "$ts"
     printf 'mysql_root_password=%s\n' "$sql_pw"
     printf 'web_admin_password=%s\n' "$web_pw"
+    for kv in ${extra[@]+"${extra[@]}"}; do
+      printf '%s\n' "$kv"
+    done
   } >"$file"
   chmod 0600 "$file"
   printf '%s' "$file"
@@ -404,6 +436,204 @@ netinstall::flags_shared() {
   flag::add force --type bool --help 'ignora a checagem de "já parece instalado"'
   flag::add_secret sql-password --prompt 'senha root do MySQL desta instalação'
   flag::add_secret web-password --prompt 'senha admin da interface Web do Issabel'
+}
+
+# netinstall::ssh_hardening_flags — registra as flags headless da tweak ssh-hardening. Chame
+# ANTES de flag::parse, junto do resto das flags do produto.
+netinstall::ssh_hardening_flags() {
+  flag::add tweak-ssh-lock-root --type bool --default 1 \
+    --help 'ssh-hardening: desabilita login SSH do root e padroniza sua senha'
+  flag::add_secret tweak-ssh-root-password \
+    --prompt 'senha do root pra acesso via KVM/console (vazio = phonevox@@)'
+  flag::add tweak-ssh-create-user --type bool --default 1 \
+    --help 'ssh-hardening: cria um usuário dedicado com sudo'
+  flag::add tweak-ssh-username --default phonevox \
+    --help 'ssh-hardening: nome do usuário dedicado'
+  flag::add tweak-ssh-pubkey \
+    --help 'ssh-hardening: chave pública SSH autorizada pro usuário dedicado'
+  flag::add tweak-ssh-allow-password --type bool --default 0 \
+    --help 'ssh-hardening: permite login por senha (além da chave) pro usuário dedicado'
+  flag::add tweak-ssh-change-port --type bool --default 1 \
+    --help 'ssh-hardening: troca a porta padrão do SSH'
+  flag::add tweak-ssh-port --default 21122 \
+    --help 'ssh-hardening: nova porta SSH'
+}
+
+# netinstall::ssh_hardening_ask <has_tty> — popula SSH_HARDEN_* no escopo do chamador (mesmo
+# idioma de `tweaks`/phonevox_tweaks_menu). Chame direto, nunca via $(...): tui::select/input
+# escrevem parte da UI em stdout.
+netinstall::ssh_hardening_ask() {
+  local has_tty=$1
+
+  SSH_HARDEN_LOCK_ROOT=0
+  SSH_HARDEN_ROOT_PASSWORD=''
+  SSH_HARDEN_CREATE_USER=0
+  SSH_HARDEN_USERNAME=''
+  SSH_HARDEN_PUBKEY=''
+  SSH_HARDEN_ALLOW_PASSWORD=0
+  SSH_HARDEN_USER_PASSWORD=''
+  SSH_HARDEN_CHANGE_PORT=0
+  SSH_HARDEN_PORT=''
+
+  # Sem TTY e sem NENHUMA flag --tweak-ssh-*: não aplica nada (não herda o default do catálogo
+  # em automação que não conhece esta flag).
+  if ((!has_tty)); then
+    local f any_flag=0
+    for f in tweak-ssh-lock-root tweak-ssh-root-password tweak-ssh-root-password-file \
+      tweak-ssh-create-user tweak-ssh-username tweak-ssh-pubkey \
+      tweak-ssh-allow-password tweak-ssh-change-port tweak-ssh-port; do
+      flag::has "$f" && { any_flag=1; break; }
+    done
+    ((any_flag)) || return 0
+  fi
+
+  # 1. bloquear root
+  if flag::has tweak-ssh-lock-root; then
+    SSH_HARDEN_LOCK_ROOT=$(flag::get tweak-ssh-lock-root 1)
+  elif ((has_tty)); then
+    tui::select "$(tui::breadcrumb netinstall issabel5 'SSH' 'bloquear root')" \
+      'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
+    [[ $TUI_CHOICE == 'Não' ]] || SSH_HARDEN_LOCK_ROOT=1
+  else
+    SSH_HARDEN_LOCK_ROOT=1
+  fi
+
+  if ((SSH_HARDEN_LOCK_ROOT)); then
+    if flag::has tweak-ssh-root-password || flag::has tweak-ssh-root-password-file; then
+      SSH_HARDEN_ROOT_PASSWORD=$(flag::get tweak-ssh-root-password)
+      [[ -z $SSH_HARDEN_ROOT_PASSWORD ]] && SSH_HARDEN_ROOT_PASSWORD='phonevox@@'
+    elif ((has_tty)); then
+      tui::password "$(tui::breadcrumb netinstall issabel5 'SSH')" \
+        'senha do root pra KVM/console (vazio = phonevox@@)'
+      SSH_HARDEN_ROOT_PASSWORD=${TUI_PASSWORD:-phonevox@@}
+    else
+      SSH_HARDEN_ROOT_PASSWORD='phonevox@@'
+    fi
+    log::add_secret "$SSH_HARDEN_ROOT_PASSWORD"
+  fi
+
+  # 2. usuário dedicado
+  if flag::has tweak-ssh-create-user; then
+    SSH_HARDEN_CREATE_USER=$(flag::get tweak-ssh-create-user 1)
+  elif ((has_tty)); then
+    tui::select "$(tui::breadcrumb netinstall issabel5 'SSH' 'usuário dedicado')" \
+      'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
+    [[ $TUI_CHOICE == 'Não' ]] || SSH_HARDEN_CREATE_USER=1
+  else
+    SSH_HARDEN_CREATE_USER=1
+  fi
+
+  if ((SSH_HARDEN_CREATE_USER)); then
+    SSH_HARDEN_USERNAME=$(flag::get tweak-ssh-username phonevox)
+    if ((has_tty)) && ! flag::has tweak-ssh-username; then
+      tui::input 'nome do usuário dedicado' phonevox || exit "$PVX_EXIT_ABORTED"
+      SSH_HARDEN_USERNAME=$TUI_INPUT
+    fi
+    if [[ ! $SSH_HARDEN_USERNAME =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+      log::error 'netinstall issabel5: --tweak-ssh-username inválido (use [a-z0-9_-], começando com letra/underscore): %s' "$SSH_HARDEN_USERNAME"
+      exit "$PVX_EXIT_USAGE"
+    fi
+
+    if flag::has tweak-ssh-pubkey; then
+      SSH_HARDEN_PUBKEY=$(flag::get tweak-ssh-pubkey)
+      if ! netinstall::ssh_validate_pubkey "$SSH_HARDEN_PUBKEY"; then
+        log::error 'netinstall issabel5: --tweak-ssh-pubkey não parece uma chave pública SSH válida'
+        exit "$PVX_EXIT_USAGE"
+      fi
+    elif ((has_tty)); then
+      while true; do
+        tui::input 'cole a chave pública SSH (ssh-ed25519/ssh-rsa/ecdsa-sha2-*)' '' || exit "$PVX_EXIT_ABORTED"
+        netinstall::ssh_validate_pubkey "$TUI_INPUT" && { SSH_HARDEN_PUBKEY=$TUI_INPUT; break; }
+        printf 'chave inválida — precisa começar com ssh-ed25519/ssh-rsa/ecdsa-sha2-*\n' >&2
+      done
+    else
+      log::error 'netinstall issabel5: --tweak-ssh-pubkey é obrigatória sem terminal interativo (ssh-hardening + criação de usuário ativas)'
+      exit "$PVX_EXIT_USAGE"
+    fi
+
+    if flag::has tweak-ssh-allow-password; then
+      SSH_HARDEN_ALLOW_PASSWORD=$(flag::get tweak-ssh-allow-password 0)
+    elif ((has_tty)); then
+      tui::select "$(tui::breadcrumb netinstall issabel5 'SSH' 'permitir senha')" \
+        'Não (recomendado, só chave)' 'Sim' || exit "$PVX_EXIT_ABORTED"
+      [[ $TUI_CHOICE == 'Sim' ]] && SSH_HARDEN_ALLOW_PASSWORD=1
+    fi
+
+    if ((SSH_HARDEN_ALLOW_PASSWORD)); then
+      SSH_HARDEN_USER_PASSWORD=$(netinstall::gen_password)
+      log::add_secret "$SSH_HARDEN_USER_PASSWORD"
+    fi
+  fi
+
+  # 3. porta SSH
+  if flag::has tweak-ssh-change-port; then
+    SSH_HARDEN_CHANGE_PORT=$(flag::get tweak-ssh-change-port 1)
+  elif ((has_tty)); then
+    tui::select "$(tui::breadcrumb netinstall issabel5 'SSH' 'porta')" \
+      'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
+    [[ $TUI_CHOICE == 'Não' ]] || SSH_HARDEN_CHANGE_PORT=1
+  else
+    SSH_HARDEN_CHANGE_PORT=1
+  fi
+
+  if ((SSH_HARDEN_CHANGE_PORT)); then
+    SSH_HARDEN_PORT=$(flag::get tweak-ssh-port 21122)
+    if ((has_tty)) && ! flag::has tweak-ssh-port; then
+      tui::input 'porta SSH' 21122 || exit "$PVX_EXIT_ABORTED"
+      SSH_HARDEN_PORT=$TUI_INPUT
+    fi
+    if [[ ! $SSH_HARDEN_PORT =~ ^[0-9]+$ ]] || ((SSH_HARDEN_PORT < 1 || SSH_HARDEN_PORT > 65535)); then
+      log::error 'netinstall issabel5: --tweak-ssh-port inválido (precisa ser 1-65535): %s' "$SSH_HARDEN_PORT"
+      exit "$PVX_EXIT_USAGE"
+    fi
+  fi
+}
+
+# netinstall::ssh_hardening_apply <lock_root> <root_pw> <create_user> <username> <pubkey>
+# <allow_pw> <user_pw> <change_port> <port> [sshd_config] — só escreve/valida; NUNCA reinicia
+# o sshd (ativa no reboot final do netinstall::_issabel5_finish).
+netinstall::ssh_hardening_apply() {
+  local lock_root=$1 root_pw=$2 create_user=$3 username=$4 pubkey=$5
+  local allow_pw=$6 user_pw=$7 change_port=$8 port=$9
+  local sshd_config=${10:-/etc/ssh/sshd_config}
+
+  ((lock_root || create_user || change_port)) || return 0
+
+  [[ -f $sshd_config ]] && srun -- cp --preserve "$sshd_config" "$sshd_config.bak.$(date +%F_%H%M%S)"
+
+  if ((lock_root)); then
+    log::info 'netinstall issabel5: ssh-hardening — bloqueando login SSH do root...'
+    printf '%s:%s' root "$root_pw" | run -- chpasswd
+    netinstall::sshd_config_upsert "$sshd_config" PermitRootLogin no
+  fi
+
+  if ((create_user)); then
+    log::info 'netinstall issabel5: ssh-hardening — criando usuário dedicado %s...' "$username"
+    id "$username" &>/dev/null || run -- useradd -m -s /bin/bash "$username"
+    run -- usermod -aG wheel "$username"
+    local home_dir ssh_dir
+    home_dir=$(getent passwd "$username" | cut -d: -f6)
+    ssh_dir="$home_dir/.ssh"
+    run -- mkdir -p "$ssh_dir"
+    run -- chmod 700 "$ssh_dir"
+    run -- bash -c 'grep -qxF "$1" "$2" 2>/dev/null || printf "%s\n" "$1" >>"$2"' \
+      -- "$pubkey" "$ssh_dir/authorized_keys"
+    run -- chmod 600 "$ssh_dir/authorized_keys"
+    run -- chown -R "$username:$username" "$ssh_dir"
+    ((allow_pw)) && printf '%s:%s' "$username" "$user_pw" | run -- chpasswd
+  fi
+
+  if ((change_port)); then
+    log::info 'netinstall issabel5: ssh-hardening — trocando a porta SSH para %s...' "$port"
+    netinstall::sshd_config_upsert "$sshd_config" Port "$port"
+  fi
+
+  if ! run -- sshd -t -f "$sshd_config"; then
+    log::error 'netinstall issabel5: ssh-hardening — sshd_config inválido, restaurando backup (mudanças de SSH NÃO aplicadas)'
+    local backup
+    backup=$(ls -t "$sshd_config".bak.* 2>/dev/null | head -n1)
+    [[ -n $backup ]] && run -- cp --preserve "$backup" "$sshd_config"
+  fi
 }
 
 # netinstall::render_astver_placeholder <arquivo> <astver> — os arquivos de pacote do legado

@@ -123,6 +123,7 @@ netinstall::_issabel5_custom() {
   flag::set_usage 'pvx netinstall issabel5' 'Instala o Issabel 5 do zero (Rocky/CentOS/RHEL 8) via o fluxo próprio do pvx'
   flag::add_standard
   netinstall::flags_shared
+  netinstall::ssh_hardening_flags
   # aceita e ignora — este é o fluxo padrão agora; --custom só existe pra não quebrar quem já
   # tinha o hábito de digitar. Ver netinstall::run_issabel5 pro dispatch de verdade (--legacy).
   flag::add custom --type bool --help 'sem efeito — este já é o fluxo padrão (aceito só por compatibilidade)'
@@ -201,10 +202,18 @@ netinstall::_issabel5_custom() {
   # stdout). A função popula `tweaks` direto, igual astver/addpkgs já fazem com TUI_RESULT.
   local -a tweaks=()
   netinstall::phonevox_tweaks_menu issabel5 "$has_tty"
-  local tweak_operator_panel=0 _tw
+  local tweak_operator_panel=0 tweak_ssh_hardening=0 _tw
   for _tw in ${tweaks[@]+"${tweaks[@]}"}; do
     [[ $_tw == operator-panel ]] && tweak_operator_panel=1
+    [[ $_tw == ssh-hardening ]] && tweak_ssh_hardening=1
   done
+
+  local SSH_HARDEN_LOCK_ROOT=0 SSH_HARDEN_ROOT_PASSWORD='' SSH_HARDEN_CREATE_USER=0 \
+    SSH_HARDEN_USERNAME='' SSH_HARDEN_PUBKEY='' SSH_HARDEN_ALLOW_PASSWORD=0 \
+    SSH_HARDEN_USER_PASSWORD='' SSH_HARDEN_CHANGE_PORT=0 SSH_HARDEN_PORT=''
+  if ((tweak_ssh_hardening)); then
+    netinstall::ssh_hardening_ask "$has_tty"
+  fi
 
   local addpkgs_display='nenhum'
   if ((${#addpkgs_keys[@]})); then
@@ -214,11 +223,28 @@ netinstall::_issabel5_custom() {
   if ((${#tweaks[@]})); then
     tweaks_display=$(IFS=', '; printf '%s' "${tweaks[*]}")
   fi
-  netinstall::print_summary issabel5 "$astver" "$addpkgs_display" "$tweaks_display"
+  local ssh_summary=''
+  if ((tweak_ssh_hardening)); then
+    ((SSH_HARDEN_LOCK_ROOT)) && ssh_summary+=$'\n  SSH: root sem login SSH (senha padronizada p/ KVM)'
+    ((SSH_HARDEN_CREATE_USER)) && ssh_summary+=$'\n  SSH: usuário dedicado '"$SSH_HARDEN_USERNAME"
+    ((SSH_HARDEN_CHANGE_PORT)) && ssh_summary+=$'\n  SSH: porta '"$SSH_HARDEN_PORT"
+  fi
+  netinstall::print_summary issabel5 "$astver" "$addpkgs_display" "$tweaks_display" "$ssh_summary"
 
   if ! netinstall::confirm_destructive 'Prosseguir com a instalação do Issabel 5?'; then
     log::error 'netinstall issabel5: cancelado (sem confirmação)'
     exit "$PVX_EXIT_ABORTED"
+  fi
+
+  if ((tweak_ssh_hardening)) && ((SSH_HARDEN_LOCK_ROOT || SSH_HARDEN_CREATE_USER || SSH_HARDEN_CHANGE_PORT)); then
+    local ssh_confirm_msg='ssh-hardening:'
+    ((SSH_HARDEN_CHANGE_PORT)) && ssh_confirm_msg+=" a porta SSH vai mudar pra $SSH_HARDEN_PORT;"
+    ((SSH_HARDEN_LOCK_ROOT)) && ssh_confirm_msg+=' o root não vai mais aceitar login SSH;'
+    ssh_confirm_msg+=' tudo só depois do reboot final. Confirma?'
+    if ! exec::confirm "$ssh_confirm_msg [s/N]" n; then
+      log::error 'netinstall issabel5: cancelado (ssh-hardening não confirmado)'
+      exit "$PVX_EXIT_ABORTED"
+    fi
   fi
 
   # add_repos ANTES de prepare_system, não depois: prepare_system instala
@@ -231,6 +257,12 @@ netinstall::_issabel5_custom() {
   netinstall::_issabel5_enable_php_remi
   netinstall::_issabel5_install_packages "$astver" "${addpkgs[@]}"
   netinstall::_issabel5_post_install
+  if ((tweak_ssh_hardening)); then
+    netinstall::ssh_hardening_apply "$SSH_HARDEN_LOCK_ROOT" "$SSH_HARDEN_ROOT_PASSWORD" \
+      "$SSH_HARDEN_CREATE_USER" "$SSH_HARDEN_USERNAME" "$SSH_HARDEN_PUBKEY" \
+      "$SSH_HARDEN_ALLOW_PASSWORD" "$SSH_HARDEN_USER_PASSWORD" \
+      "$SSH_HARDEN_CHANGE_PORT" "$SSH_HARDEN_PORT"
+  fi
   netinstall::_issabel5_install_db
   # gated pela tweak "operator-panel" (default ON — ver netinstall::_tweaks_catalog em
   # lib/common.sh); antes desta tweak existir, este passo era incondicional.
@@ -238,7 +270,23 @@ netinstall::_issabel5_custom() {
     netinstall::_issabel5_control_panel
   fi
   netinstall::_issabel5_set_timezone
-  netinstall::_issabel5_set_passwords "$sql_pw" "$web_pw"
+
+  local -a ssh_cred_kv=()
+  if ((tweak_ssh_hardening)); then
+    ((SSH_HARDEN_LOCK_ROOT)) && ssh_cred_kv+=("ssh_root_password=$SSH_HARDEN_ROOT_PASSWORD")
+    if ((SSH_HARDEN_CREATE_USER)); then
+      ssh_cred_kv+=("ssh_user=$SSH_HARDEN_USERNAME")
+      ((SSH_HARDEN_ALLOW_PASSWORD)) && ssh_cred_kv+=("ssh_user_password=$SSH_HARDEN_USER_PASSWORD")
+    fi
+    ((SSH_HARDEN_CHANGE_PORT)) && ssh_cred_kv+=("ssh_port=$SSH_HARDEN_PORT")
+  fi
+  netinstall::_issabel5_set_passwords "$sql_pw" "$web_pw" ${ssh_cred_kv[@]+"${ssh_cred_kv[@]}"}
+
+  if ((tweak_ssh_hardening)); then
+    ((SSH_HARDEN_CHANGE_PORT)) && log::warn 'netinstall issabel5: ssh-hardening — depois do reboot, reconecte na porta %s' "$SSH_HARDEN_PORT"
+    ((SSH_HARDEN_CREATE_USER)) && log::warn 'netinstall issabel5: ssh-hardening — depois do reboot, use o usuário %s (chave fornecida) pra acessar' "$SSH_HARDEN_USERNAME"
+    ((SSH_HARDEN_LOCK_ROOT)) && log::warn 'netinstall issabel5: ssh-hardening — depois do reboot, root só via KVM/console'
+  fi
   netinstall::_issabel5_finish
 }
 
@@ -433,6 +481,8 @@ netinstall::_issabel5_install_db() {
 
 netinstall::_issabel5_set_passwords() {
   local sql_pw=$1 web_pw=$2
+  shift 2
+  local -a extra_kv=("$@")
   log::info 'netinstall issabel5: definindo senhas de acesso (MySQL root / admin Web)...'
 
   if run --mask 3,4 -- /usr/bin/issabel-admin-passwords --cli init "$sql_pw" "$web_pw"; then
@@ -444,7 +494,7 @@ netinstall::_issabel5_set_passwords() {
   fi
 
   local cred_file
-  cred_file=$(netinstall::save_credentials issabel5 "$sql_pw" "$web_pw")
+  cred_file=$(netinstall::save_credentials issabel5 "$sql_pw" "$web_pw" ${extra_kv[@]+"${extra_kv[@]}"})
   log::info 'netinstall issabel5: credenciais salvas em %s (0600) — só existem aí e nesta tela' "$cred_file"
 }
 
