@@ -149,7 +149,8 @@ netinstall::_issabel5_custom() {
   astver=$(flag::get astver '')
   if [[ -z $astver ]]; then
     if (( has_tty )); then
-      tui::select "$(tui::breadcrumb netinstall issabel5 'Asterisk')" 'Asterisk 16' 'Asterisk 18' || exit "$PVX_EXIT_ABORTED"
+      tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'Asterisk')" \
+        'Escolha a versão do Asterisk a instalar.')" 'Asterisk 16' 'Asterisk 18' || exit "$PVX_EXIT_ABORTED"
       [[ $TUI_CHOICE == 'Asterisk 16' ]] && astver=16 || astver=18
     else
       log::error 'netinstall issabel5: --astver é obrigatório sem terminal interativo'
@@ -163,7 +164,8 @@ netinstall::_issabel5_custom() {
     # licensed e community-blocklist já vêm marcados (mesmo default do dialog legado); wanpipe
     # fica desmarcado (drivers de hardware específico, não algo pra ligar sem saber que precisa).
     TUI_CHECKLIST_DEFAULT=(1 1 0)
-    tui::checklist "$(tui::breadcrumb netinstall issabel5 'Pacotes adicionais')" \
+    tui::checklist "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'Pacotes adicionais')" \
+      'Módulos extras da Rede Issabel — marque os que quiser instalar junto.')" \
       'licensed              módulos licenciados da Rede Issabel (issabel.guru)' \
       'community-blocklist   Community Realtime Block List (bloqueia IPs SIP ofensores conhecidos)' \
       'wanpipe               drivers Sangoma Wanpipe'

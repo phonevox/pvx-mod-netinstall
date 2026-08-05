@@ -75,7 +75,8 @@ netinstall::run_issabel4() {
   astver=$(flag::get astver '')
   if [[ -z $astver ]]; then
     if (( has_tty )); then
-      tui::select "$(tui::breadcrumb netinstall issabel4 'Asterisk')" 'Asterisk 11' 'Asterisk 13' 'Asterisk 16' ||
+      tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel4 'Asterisk')" \
+        'Escolha a versão do Asterisk a instalar.')" 'Asterisk 11' 'Asterisk 13' 'Asterisk 16' ||
         exit "$PVX_EXIT_ABORTED"
       astver=${TUI_CHOICE##* }
     else
@@ -91,7 +92,8 @@ netinstall::run_issabel4() {
     # issabel5); wanpipe e callcenter ficam desmarcados (hardware/caso específico, não algo
     # pra ligar sem saber que precisa).
     TUI_CHECKLIST_DEFAULT=(1 1 0 0)
-    tui::checklist "$(tui::breadcrumb netinstall issabel4 'Pacotes adicionais')" \
+    tui::checklist "$(tui::with_desc "$(tui::breadcrumb netinstall issabel4 'Pacotes adicionais')" \
+      'Módulos extras da Rede Issabel — marque os que quiser instalar junto.')" \
       'licensed              módulos licenciados da Rede Issabel (issabel.guru)' \
       'community-blocklist   Community Realtime Block List' \
       'wanpipe               drivers Sangoma Wanpipe' \
