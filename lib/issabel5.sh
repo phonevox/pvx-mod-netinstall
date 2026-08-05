@@ -188,8 +188,14 @@ netinstall::_issabel5_custom() {
   # valores já resolvidos adiante; QUEM aplica a senha continua sendo _set_passwords, na mesma
   # ordem de sempre (só dá pra rodar issabel-admin-passwords depois do Issabel instalado).
   local sql_pw web_pw
-  sql_pw=$(netinstall::resolve_secret_or_ask sql-password "$(tui::breadcrumb netinstall issabel5 'MySQL')" 'Defina a senha do MySQL')
-  web_pw=$(netinstall::resolve_secret_or_ask web-password "$(tui::breadcrumb netinstall issabel5 'Web Interface')" 'Defina a senha da interface Web')
+  sql_pw=$(netinstall::resolve_secret_or_ask sql-password \
+    "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'MySQL')" \
+      'Senha do usuário root do MySQL/MariaDB, usada pelo Issabel/Asterisk.')" \
+    'Defina a senha do MySQL')
+  web_pw=$(netinstall::resolve_secret_or_ask web-password \
+    "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'Web Interface')" \
+      'Senha do usuário admin da interface web do Issabel.')" \
+    'Defina a senha da interface Web')
   log::add_secret "$sql_pw"
   log::add_secret "$web_pw"
 
