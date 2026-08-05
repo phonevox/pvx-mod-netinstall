@@ -10,6 +10,9 @@ NETINSTALL_NO_TMUX=${NETINSTALL_NO_TMUX:-0}
 # `dnf install` (e o próprio pvx junto) no meio da transação é alto o bastante pra avisar
 # ANTES de começar, não deixar o operador descobrir pela morte súbita e muda do processo.
 NETINSTALL_MIN_MEM_KB=${NETINSTALL_MIN_MEM_KB:-$((1536 * 1024))}
+# Chave pública SSH principal da Phonevox — default do usuário dedicado da tweak
+# ssh-hardening. Ninguém precisa pensar em qual chave colar; só confirmar (Enter) ou trocar.
+NETINSTALL_SSH_DEFAULT_PUBKEY=${NETINSTALL_SSH_DEFAULT_PUBKEY:-'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC5S9t+CHuQYVe9It/zVWNEYWq7fuGBF1oll63MujAREeP3sB3NVhrWs8AcDNOwPQ+8Z7s4Yc8/r8BKCquujugkWv3ilZjJAbeyR7A6rddRM1ai1bfc8gRV7CD1tExQuO+QE9RORQ0f0J+0+Fu4vB3YRMeSx4czq5tbYKwvdfP6pgWWRppyA8uM7nKXnYsdwkyKxJZb4I353cC4C+ZvaEUQahygNs9XgblBB9TM0UuttdoBi4pTj4aqLXTBhcLqghkQP45JaQ8/G5qSzs2U2eGH4L+mEqFSg+ybL3KxGmyHxtCBOqhFTm/s3EqkSQ80OSwdYSzH7GMTWWfKZ4UoeFiQucHYto83LmfBYdqckbtw7ZNsXU/egQR5eSwtwQBK5yLnPSnQldozMKoS2gKayWtxqvjiYpQacw48DaB1mZUfl7SJ/fa9LEUrQ2CnizQJSemwsteJqDII95mzCpyGXAeNfXdhI52dx0YXx3D62LXQBAn1HSIgnzsrEVh29CumZ28cxpOL0djI2Y8VyHgw6fFSAZqmn3Xr2yCxBvzN4rlEvtzGVw8PxAZT33duLEgPFV2XBrU5I98bufgg8cE3NXTLtMwuYWbtKtbRZkpRJesQEkaL70kLvvsYCZAaqDhwLAO8q41czunYLt6MyKcAHrb5whFBz6Fx/WrEEpM1p5KhSw== MAIN@PHONEVOX'}
 
 # netinstall::_mem_total_kb [arquivo] — soma MemTotal+SwapTotal (KB) de /proc/meminfo (ou de
 # um arquivo no mesmo formato, pra teste). Soma o TOTAL de swap, não o livre: swap alocável é
@@ -172,7 +175,7 @@ netinstall::ensure_tmux() {
 # inteiro) e o operador tinha que apertar enter às cegas pra passar pelo prompt invisível.
 netinstall::ask_password() {
   local title=$1 label=$2
-  tui::password "$title" "$label (deixe vazio para aleatório)"
+  tui::password "$title" "$label [aleatório]"
   local v=$TUI_PASSWORD
   [[ -z $v ]] && v=$(netinstall::gen_password)
   printf '%s' "$v"
@@ -203,18 +206,27 @@ netinstall::resolve_secret_or_ask() {
 # confiar de memória no que respondeu — metade das respostas (astver, addpkgs) já rolou pra
 # fora da tela ou veio só de flag, nunca visível junto. Vai pra stderr (igual ao resto dos
 # prompts do menu), não por log:: — é uma tela de revisão, não um evento de log.
+# netinstall::_summary_section <rótulo> — separador visível entre grupos do resumo (Sistema /
+# Tweaks Phonevox / SSH Hardening etc.), cor moderada (cyan, mesma família do destaque de
+# tui::breadcrumb) — só o rótulo do separador, não os valores abaixo dele.
+netinstall::_summary_section() {
+  printf '\n  %s── %s ──%s\n' "${PVX_C[cyan]:-}" "$1" "${PVX_C[reset]:-}" >&2
+}
+
 netinstall::print_summary() {
   local produto=$1 astver=$2 addpkgs_display=$3 tweaks_display=${4:-nenhum} extra=${5:-}
   local tz lang
   tz=$(flag::get timezone 'America/Sao_Paulo')
   lang=$(flag::get lang pt_BR)
   printf '\n%s%s%s\n' "${PVX_C[bold]:-}" "$(tui::breadcrumb netinstall "$produto" 'resumo')" "${PVX_C[reset]:-}" >&2
+  netinstall::_summary_section Sistema
   printf '  Asterisk: %s\n' "$astver" >&2
   printf '  Pacotes extras: %s\n' "$addpkgs_display" >&2
-  printf '  Tweaks Phonevox: %s\n' "$tweaks_display" >&2
   printf '  Timezone: %s\n' "$tz" >&2
   printf '  Idioma: %s\n' "$lang" >&2
   printf '  Senhas (MySQL/Web): definidas\n' >&2
+  netinstall::_summary_section 'Tweaks Phonevox'
+  printf '  %s\n' "$tweaks_display" >&2
   [[ -n $extra ]] && printf '%s\n' "$extra" >&2
   printf '\n' >&2
 }
@@ -449,8 +461,8 @@ netinstall::ssh_hardening_flags() {
     --help 'ssh-hardening: cria um usuário dedicado com sudo'
   flag::add tweak-ssh-username --default phonevox \
     --help 'ssh-hardening: nome do usuário dedicado'
-  flag::add tweak-ssh-pubkey \
-    --help 'ssh-hardening: chave pública SSH autorizada pro usuário dedicado'
+  flag::add tweak-ssh-pubkey --default "$NETINSTALL_SSH_DEFAULT_PUBKEY" \
+    --help 'ssh-hardening: chave pública SSH autorizada pro usuário dedicado (default: chave principal da Phonevox)'
   flag::add tweak-ssh-allow-password --type bool --default 0 \
     --help 'ssh-hardening: permite login por senha (além da chave) pro usuário dedicado'
   flag::add tweak-ssh-change-port --type bool --default 1 \
@@ -491,7 +503,8 @@ netinstall::ssh_hardening_ask() {
   if flag::has tweak-ssh-lock-root; then
     SSH_HARDEN_LOCK_ROOT=$(flag::get tweak-ssh-lock-root 1)
   elif ((has_tty)); then
-    tui::select "$(tui::breadcrumb netinstall issabel5 'SSH' 'bloquear root')" \
+    tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'bloquear root')" \
+      'Desabilita o login SSH do root e padroniza sua senha (uso restrito a KVM/console).')" \
       'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
     [[ $TUI_CHOICE == 'Não' ]] || SSH_HARDEN_LOCK_ROOT=1
   else
@@ -503,8 +516,9 @@ netinstall::ssh_hardening_ask() {
       SSH_HARDEN_ROOT_PASSWORD=$(flag::get tweak-ssh-root-password)
       [[ -z $SSH_HARDEN_ROOT_PASSWORD ]] && SSH_HARDEN_ROOT_PASSWORD='phonevox@@'
     elif ((has_tty)); then
-      tui::password "$(tui::breadcrumb netinstall issabel5 'SSH')" \
-        'senha do root pra KVM/console (vazio = phonevox@@)'
+      tui::password "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'senha do root')" \
+        'Usada só via KVM/console — o root não aceita mais login SSH.')" \
+        'senha do root [phonevox@@]'
       SSH_HARDEN_ROOT_PASSWORD=${TUI_PASSWORD:-phonevox@@}
     else
       SSH_HARDEN_ROOT_PASSWORD='phonevox@@'
@@ -516,7 +530,8 @@ netinstall::ssh_hardening_ask() {
   if flag::has tweak-ssh-create-user; then
     SSH_HARDEN_CREATE_USER=$(flag::get tweak-ssh-create-user 1)
   elif ((has_tty)); then
-    tui::select "$(tui::breadcrumb netinstall issabel5 'SSH' 'usuário dedicado')" \
+    tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'usuário dedicado')" \
+      'Cria uma conta com sudo (grupo wheel), autenticada por chave SSH.')" \
       'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
     [[ $TUI_CHOICE == 'Não' ]] || SSH_HARDEN_CREATE_USER=1
   else
@@ -526,7 +541,10 @@ netinstall::ssh_hardening_ask() {
   if ((SSH_HARDEN_CREATE_USER)); then
     SSH_HARDEN_USERNAME=$(flag::get tweak-ssh-username phonevox)
     if ((has_tty)) && ! flag::has tweak-ssh-username; then
-      tui::input 'nome do usuário dedicado' phonevox || exit "$PVX_EXIT_ABORTED"
+      tui::input 'nome do usuário dedicado' phonevox \
+        "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'usuário dedicado' 'nome')" \
+          'Nome da conta criada com sudo.')" \
+        || exit "$PVX_EXIT_ABORTED"
       SSH_HARDEN_USERNAME=$TUI_INPUT
     fi
     if [[ ! $SSH_HARDEN_USERNAME =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
@@ -534,6 +552,9 @@ netinstall::ssh_hardening_ask() {
       exit "$PVX_EXIT_USAGE"
     fi
 
+    # Default = chave principal da Phonevox (NETINSTALL_SSH_DEFAULT_PUBKEY), tanto na flag
+    # (--tweak-ssh-pubkey já sai com --default) quanto aqui no TTY — ninguém precisa ir buscar
+    # a própria chave, só confirmar (Enter) ou colar outra se quiser.
     if flag::has tweak-ssh-pubkey; then
       SSH_HARDEN_PUBKEY=$(flag::get tweak-ssh-pubkey)
       if ! netinstall::ssh_validate_pubkey "$SSH_HARDEN_PUBKEY"; then
@@ -542,19 +563,23 @@ netinstall::ssh_hardening_ask() {
       fi
     elif ((has_tty)); then
       while true; do
-        tui::input 'cole a chave pública SSH (ssh-ed25519/ssh-rsa/ecdsa-sha2-*)' '' || exit "$PVX_EXIT_ABORTED"
+        tui::input 'cole a chave pública SSH (ssh-ed25519/ssh-rsa/ecdsa-sha2-*)' \
+          "$NETINSTALL_SSH_DEFAULT_PUBKEY" \
+          "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'usuário dedicado' 'chave pública')" \
+            'Chave autorizada nessa conta — Enter usa a chave principal da Phonevox.')" \
+          || exit "$PVX_EXIT_ABORTED"
         netinstall::ssh_validate_pubkey "$TUI_INPUT" && { SSH_HARDEN_PUBKEY=$TUI_INPUT; break; }
         printf 'chave inválida — precisa começar com ssh-ed25519/ssh-rsa/ecdsa-sha2-*\n' >&2
       done
     else
-      log::error 'netinstall issabel5: --tweak-ssh-pubkey é obrigatória sem terminal interativo (ssh-hardening + criação de usuário ativas)'
-      exit "$PVX_EXIT_USAGE"
+      SSH_HARDEN_PUBKEY=$NETINSTALL_SSH_DEFAULT_PUBKEY
     fi
 
     if flag::has tweak-ssh-allow-password; then
       SSH_HARDEN_ALLOW_PASSWORD=$(flag::get tweak-ssh-allow-password 0)
     elif ((has_tty)); then
-      tui::select "$(tui::breadcrumb netinstall issabel5 'SSH' 'permitir senha')" \
+      tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'permitir senha')" \
+        'Para o usuário dedicado, deseja permitir login via senha?')" \
         'Não (recomendado, só chave)' 'Sim' || exit "$PVX_EXIT_ABORTED"
       [[ $TUI_CHOICE == 'Sim' ]] && SSH_HARDEN_ALLOW_PASSWORD=1
     fi
@@ -569,7 +594,8 @@ netinstall::ssh_hardening_ask() {
   if flag::has tweak-ssh-change-port; then
     SSH_HARDEN_CHANGE_PORT=$(flag::get tweak-ssh-change-port 1)
   elif ((has_tty)); then
-    tui::select "$(tui::breadcrumb netinstall issabel5 'SSH' 'porta')" \
+    tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'porta')" \
+      'Alterar a porta SSH padrão?')" \
       'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
     [[ $TUI_CHOICE == 'Não' ]] || SSH_HARDEN_CHANGE_PORT=1
   else
@@ -579,7 +605,10 @@ netinstall::ssh_hardening_ask() {
   if ((SSH_HARDEN_CHANGE_PORT)); then
     SSH_HARDEN_PORT=$(flag::get tweak-ssh-port 21122)
     if ((has_tty)) && ! flag::has tweak-ssh-port; then
-      tui::input 'porta SSH' 21122 || exit "$PVX_EXIT_ABORTED"
+      tui::input 'porta SSH' 21122 \
+        "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'porta' 'número')" \
+          'Porta que o sshd vai escutar depois do reboot.')" \
+        || exit "$PVX_EXIT_ABORTED"
       SSH_HARDEN_PORT=$TUI_INPUT
     fi
     if [[ ! $SSH_HARDEN_PORT =~ ^[0-9]+$ ]] || ((SSH_HARDEN_PORT < 1 || SSH_HARDEN_PORT > 65535)); then

@@ -340,22 +340,16 @@ out=$(ssh_hardening_ask_vars)
 assert_eq 'ssh_hardening_ask: 1 flag dada ativa "resolve com defaults" pros itens sem flag própria' \
   'LOCK_ROOT=1 ROOT_PW=phonevox@@ CREATE_USER=1 USERNAME=phonevox PUBKEY=ssh-ed25519 AAAAtest x ALLOW_PW=0 USER_PW_SET=0 CHANGE_PORT=1 PORT=21122' "$out"
 
-# --- ssh_hardening_ask: create_user=1 sem --tweak-ssh-pubkey e sem TTY = erro claro ------------
+# --- ssh_hardening_ask: create_user=1 sem --tweak-ssh-pubkey e sem TTY usa o default (chave -----
+# --- principal da Phonevox), não erro — ninguém precisa colar a própria chave pra isso rodar ---
+assert_rc 'NETINSTALL_SSH_DEFAULT_PUBKEY tem formato válido de chave pública' 0 \
+  netinstall::ssh_validate_pubkey "$NETINSTALL_SSH_DEFAULT_PUBKEY"
+
 flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
 flag::parse --tweak-ssh-create-user >/dev/null 2>&1
-assert_rc 'ssh_hardening_ask: create_user sem --tweak-ssh-pubkey e sem TTY sai com PVX_EXIT_USAGE' \
-  "$PVX_EXIT_USAGE" bash -c '
-    source "$PVX_LIB_DIR/bootstrap.sh"
-    pvx::require color log os exec tui flags net
-    color::init; log::init
-    source "$PVX_MODULE_DIR/lib/common.sh"
-    flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags
-    flag::parse --tweak-ssh-create-user
-    local SSH_HARDEN_LOCK_ROOT SSH_HARDEN_ROOT_PASSWORD SSH_HARDEN_CREATE_USER SSH_HARDEN_USERNAME \
-      SSH_HARDEN_PUBKEY SSH_HARDEN_ALLOW_PASSWORD SSH_HARDEN_USER_PASSWORD SSH_HARDEN_CHANGE_PORT \
-      SSH_HARDEN_PORT
-    netinstall::ssh_hardening_ask 0
-  '
+out=$(ssh_hardening_ask_vars)
+assert_eq 'ssh_hardening_ask: create_user sem --tweak-ssh-pubkey e sem TTY usa a chave default da Phonevox' \
+  "LOCK_ROOT=1 ROOT_PW=phonevox@@ CREATE_USER=1 USERNAME=phonevox PUBKEY=$NETINSTALL_SSH_DEFAULT_PUBKEY ALLOW_PW=0 USER_PW_SET=0 CHANGE_PORT=1 PORT=21122" "$out"
 
 # --- ssh_hardening_ask: username/porta inválidos são rejeitados mesmo vindo de flag ------------
 flag::reset; flag::add_standard; netinstall::flags_shared; netinstall::ssh_hardening_flags

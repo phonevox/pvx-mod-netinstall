@@ -224,10 +224,11 @@ netinstall::_issabel5_custom() {
     tweaks_display=$(IFS=', '; printf '%s' "${tweaks[*]}")
   fi
   local ssh_summary=''
-  if ((tweak_ssh_hardening)); then
-    ((SSH_HARDEN_LOCK_ROOT)) && ssh_summary+=$'\n  SSH: root sem login SSH (senha padronizada p/ KVM)'
-    ((SSH_HARDEN_CREATE_USER)) && ssh_summary+=$'\n  SSH: usuário dedicado '"$SSH_HARDEN_USERNAME"
-    ((SSH_HARDEN_CHANGE_PORT)) && ssh_summary+=$'\n  SSH: porta '"$SSH_HARDEN_PORT"
+  if ((tweak_ssh_hardening)) && ((SSH_HARDEN_LOCK_ROOT || SSH_HARDEN_CREATE_USER || SSH_HARDEN_CHANGE_PORT)); then
+    printf -v ssh_summary '\n  %s── SSH Hardening ──%s' "${PVX_C[cyan]:-}" "${PVX_C[reset]:-}"
+    ((SSH_HARDEN_LOCK_ROOT)) && ssh_summary+=$'\n  root sem login SSH (senha padronizada p/ KVM)'
+    ((SSH_HARDEN_CREATE_USER)) && ssh_summary+=$'\n  usuário dedicado: '"$SSH_HARDEN_USERNAME"
+    ((SSH_HARDEN_CHANGE_PORT)) && ssh_summary+=$'\n  porta: '"$SSH_HARDEN_PORT"
   fi
   netinstall::print_summary issabel5 "$astver" "$addpkgs_display" "$tweaks_display" "$ssh_summary"
 
