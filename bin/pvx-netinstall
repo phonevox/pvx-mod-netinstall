@@ -47,7 +47,8 @@ case $produto in
     exit $?
     ;;
   -h | --help | '')
-    if [[ -z $produto && -t 0 && -t 1 ]]; then
+    if [[ -z $produto ]] && tui::is_interactive; then
+      tui::clearscr
       if ! tui::select "$(tui::breadcrumb netinstall)" issabel5 issabel4; then
         exit 0
       fi

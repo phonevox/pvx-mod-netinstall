@@ -65,7 +65,7 @@ netinstall::run_issabel4() {
   # shellcheck disable=SC2034 # lida por netinstall::preflight em lib/common.sh
   NETINSTALL_FORCE=${PVX_FLAG_VALUE[force]:-0}
   local has_tty=0
-  [[ -t 0 && -t 1 ]] && has_tty=1
+  tui::is_interactive && has_tty=1
 
   netinstall::preflight issabel4 7
   netinstall::_issabel4_warn_stub_flags
@@ -75,6 +75,7 @@ netinstall::run_issabel4() {
   astver=$(flag::get astver '')
   if [[ -z $astver ]]; then
     if (( has_tty )); then
+      tui::clearscr
       tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel4 'Asterisk')" \
         'Escolha a versão do Asterisk a instalar.')" 'Asterisk 11' 'Asterisk 13' 'Asterisk 16' ||
         exit "$PVX_EXIT_ABORTED"
@@ -92,6 +93,7 @@ netinstall::run_issabel4() {
     # issabel5); wanpipe e callcenter ficam desmarcados (hardware/caso específico, não algo
     # pra ligar sem saber que precisa).
     TUI_CHECKLIST_DEFAULT=(1 1 0 0)
+    tui::clearscr
     tui::checklist "$(tui::with_desc "$(tui::breadcrumb netinstall issabel4 'Pacotes adicionais')" \
       'Módulos extras da Rede Issabel — marque os que quiser instalar junto.')" \
       'licensed              módulos licenciados da Rede Issabel (issabel.guru)' \

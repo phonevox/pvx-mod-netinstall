@@ -175,6 +175,7 @@ netinstall::ensure_tmux() {
 # inteiro) e o operador tinha que apertar enter às cegas pra passar pelo prompt invisível.
 netinstall::ask_password() {
   local title=$1 label=$2
+  tui::clearscr
   tui::password "$title" "$label [aleatório]"
   local v=$TUI_PASSWORD
   [[ -z $v ]] && v=$(netinstall::gen_password)
@@ -318,6 +319,7 @@ netinstall::phonevox_tweaks_menu() {
       items+=("$(printf '%-16s %s' "${keys[i]}" "${labels[i]}")")
       TUI_CHECKLIST_DEFAULT+=("${defaults[i]}")
     done
+    tui::clearscr
     tui::checklist "$(tui::with_desc "$(tui::breadcrumb netinstall "$produto" 'Tweaks Phonevox')" \
       'Customizações Phonevox opcionais, aplicadas depois da instalação principal.')" "${items[@]}"
     for item in ${TUI_RESULT[@]+"${TUI_RESULT[@]}"}; do
@@ -459,7 +461,7 @@ netinstall::ssh_hardening_flags() {
   flag::add_secret tweak-ssh-root-password \
     --prompt 'senha do root pra acesso via KVM/console (vazio = phonevox@@)'
   flag::add tweak-ssh-create-user --type bool --default 1 \
-    --help 'ssh-hardening: cria um usuário dedicado com sudo'
+    --help 'ssh-hardening: cria um usuário dedicado com sudo sem senha (NOPASSWD)'
   flag::add tweak-ssh-username --default phonevox \
     --help 'ssh-hardening: nome do usuário dedicado'
   flag::add tweak-ssh-pubkey --default "$NETINSTALL_SSH_DEFAULT_PUBKEY" \
@@ -506,6 +508,7 @@ netinstall::ssh_hardening_ask() {
   # flag::has ...` em cada bloco abaixo) sempre vence, quick ou não.
   local quick=0
   if ((has_tty)); then
+    tui::clearscr
     tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH')" \
       'Como configurar o hardening de SSH?')" \
       'Usar padrões da Phonevox (recomendado)' 'Personalizar cada opção' || exit "$PVX_EXIT_ABORTED"
@@ -516,6 +519,7 @@ netinstall::ssh_hardening_ask() {
   if flag::has tweak-ssh-lock-root; then
     SSH_HARDEN_LOCK_ROOT=$(flag::get tweak-ssh-lock-root 1)
   elif ((has_tty)) && ((!quick)); then
+    tui::clearscr
     tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'bloquear root')" \
       'Desabilita o login SSH do root e padroniza sua senha (uso restrito a KVM/console).')" \
       'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
@@ -529,6 +533,7 @@ netinstall::ssh_hardening_ask() {
       SSH_HARDEN_ROOT_PASSWORD=$(flag::get tweak-ssh-root-password)
       [[ -z $SSH_HARDEN_ROOT_PASSWORD ]] && SSH_HARDEN_ROOT_PASSWORD='phonevox@@'
     elif ((has_tty)) && ((!quick)); then
+      tui::clearscr
       tui::password "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'senha do root')" \
         'Usada só via KVM/console — o root não aceita mais login SSH.')" \
         'senha do root [phonevox@@]'
@@ -543,8 +548,9 @@ netinstall::ssh_hardening_ask() {
   if flag::has tweak-ssh-create-user; then
     SSH_HARDEN_CREATE_USER=$(flag::get tweak-ssh-create-user 1)
   elif ((has_tty)) && ((!quick)); then
+    tui::clearscr
     tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'usuário dedicado')" \
-      'Cria uma conta com sudo (grupo wheel), autenticada por chave SSH.')" \
+      'Cria uma conta com sudo sem senha (grupo wheel + regra NOPASSWD dedicada), autenticada por chave SSH.')" \
       'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
     [[ $TUI_CHOICE == 'Não' ]] || SSH_HARDEN_CREATE_USER=1
   else
@@ -554,9 +560,10 @@ netinstall::ssh_hardening_ask() {
   if ((SSH_HARDEN_CREATE_USER)); then
     SSH_HARDEN_USERNAME=$(flag::get tweak-ssh-username phonevox)
     if ((has_tty)) && ((!quick)) && ! flag::has tweak-ssh-username; then
+      tui::clearscr
       tui::input 'nome do usuário dedicado' phonevox \
         "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'usuário dedicado' 'nome')" \
-          'Nome da conta criada com sudo.')" \
+          'Nome da conta criada com sudo sem senha.')" \
         || exit "$PVX_EXIT_ABORTED"
       SSH_HARDEN_USERNAME=$TUI_INPUT
     fi
@@ -575,6 +582,7 @@ netinstall::ssh_hardening_ask() {
         exit "$PVX_EXIT_USAGE"
       fi
     elif ((has_tty)) && ((!quick)); then
+      tui::clearscr
       while true; do
         tui::input 'cole a chave pública SSH (ssh-ed25519/ssh-rsa/ecdsa-sha2-*)' \
           "$NETINSTALL_SSH_DEFAULT_PUBKEY" \
@@ -591,6 +599,7 @@ netinstall::ssh_hardening_ask() {
     if flag::has tweak-ssh-allow-password; then
       SSH_HARDEN_ALLOW_PASSWORD=$(flag::get tweak-ssh-allow-password 0)
     elif ((has_tty)) && ((!quick)); then
+      tui::clearscr
       tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'permitir senha')" \
         'Para o usuário dedicado, deseja permitir login via senha?')" \
         'Não (recomendado, só chave)' 'Sim' || exit "$PVX_EXIT_ABORTED"
@@ -607,6 +616,7 @@ netinstall::ssh_hardening_ask() {
   if flag::has tweak-ssh-change-port; then
     SSH_HARDEN_CHANGE_PORT=$(flag::get tweak-ssh-change-port 1)
   elif ((has_tty)) && ((!quick)); then
+    tui::clearscr
     tui::select "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'porta')" \
       'Alterar a porta SSH padrão?')" \
       'Sim (recomendado)' 'Não' || exit "$PVX_EXIT_ABORTED"
@@ -618,6 +628,7 @@ netinstall::ssh_hardening_ask() {
   if ((SSH_HARDEN_CHANGE_PORT)); then
     SSH_HARDEN_PORT=$(flag::get tweak-ssh-port 21122)
     if ((has_tty)) && ((!quick)) && ! flag::has tweak-ssh-port; then
+      tui::clearscr
       tui::input 'porta SSH' 21122 \
         "$(tui::with_desc "$(tui::breadcrumb netinstall issabel5 'SSH' 'porta' 'número')" \
           'Porta que o sshd vai escutar depois do reboot.')" \
@@ -631,13 +642,39 @@ netinstall::ssh_hardening_ask() {
   fi
 }
 
+# netinstall::sudoers_nopasswd <username> [sudoers_dir] — dá sudo SEM senha só pra <username>,
+# via drop-in dedicado em <sudoers_dir>/<username> (default /etc/sudoers.d) — não toca na regra
+# do grupo `wheel` em si, que continua exigindo senha pra qualquer outra conta que caia nele.
+# Idempotente; valida a sintaxe com `visudo -cf` num arquivo temporário ANTES de instalar: um
+# sudoers.d quebrado tira o sudo do sistema INTEIRO, não só deste usuário.
+netinstall::sudoers_nopasswd() {
+  local username=$1 sudoers_dir=${2:-/etc/sudoers.d}
+  local file="$sudoers_dir/$username"
+  local line="$username ALL=(ALL) NOPASSWD: ALL"
+
+  [[ -f $file ]] && grep -qxF "$line" "$file" 2>/dev/null && return 0
+
+  local tmp="$(pvx::tmpdir)/sudoers-$username"
+  printf '%s\n' "$line" >"$tmp"
+  if ! run -- visudo -cf "$tmp"; then
+    log::error 'netinstall issabel5: ssh-hardening — regra de sudo sem senha pra %s ficou com sintaxe inválida, não instalada (sudo continua pedindo senha)' "$username"
+    rm -f "$tmp"
+    return 1
+  fi
+
+  run -- mkdir -p "$sudoers_dir"
+  run -- install -m 0440 -o root -g root "$tmp" "$file"
+  rm -f "$tmp"
+}
+
 # netinstall::ssh_hardening_apply <lock_root> <root_pw> <create_user> <username> <pubkey>
-# <allow_pw> <user_pw> <change_port> <port> [sshd_config] — só escreve/valida; NUNCA reinicia
-# o sshd (ativa no reboot final do netinstall::_issabel5_finish).
+# <allow_pw> <user_pw> <change_port> <port> [sshd_config] [sudoers_dir] — só escreve/valida;
+# NUNCA reinicia o sshd (ativa no reboot final do netinstall::_issabel5_finish).
 netinstall::ssh_hardening_apply() {
   local lock_root=$1 root_pw=$2 create_user=$3 username=$4 pubkey=$5
   local allow_pw=$6 user_pw=$7 change_port=$8 port=$9
   local sshd_config=${10:-/etc/ssh/sshd_config}
+  local sudoers_dir=${11:-/etc/sudoers.d}
 
   ((lock_root || create_user || change_port)) || return 0
 
@@ -653,6 +690,9 @@ netinstall::ssh_hardening_apply() {
     log::info 'netinstall issabel5: ssh-hardening — criando usuário dedicado %s...' "$username"
     id "$username" &>/dev/null || run -- useradd -m -s /bin/bash "$username"
     run -- usermod -aG wheel "$username"
+    # `|| true`: uma regra NOPASSWD inválida já loga erro e não é instalada (ver função) — não é
+    # motivo pra abortar o resto do hardening (bloqueio de root, porta) por causa disso.
+    netinstall::sudoers_nopasswd "$username" "$sudoers_dir" || true
     local home_dir ssh_dir
     home_dir=$(getent passwd "$username" | cut -d: -f6)
     ssh_dir="$home_dir/.ssh"
