@@ -391,6 +391,7 @@ unset -f ssh_hardening_ask_vars
 # --- ssh_hardening_apply: mocks de useradd/usermod/chpasswd/id/getent/sshd, tudo em tmpdir -----
 SSH_APPLY_CALLS=$(pvx::tmpdir)/ssh-apply-calls.txt
 FAKE_HOME=$(pvx::tmpdir)/fake-home-phonevox
+SUDOERS_DIR=$(pvx::tmpdir)/fake-sudoers.d
 useradd() { printf 'useradd:%s\n' "$*" >>"$SSH_APPLY_CALLS"; }
 usermod() { printf 'usermod:%s\n' "$*" >>"$SSH_APPLY_CALLS"; }
 chpasswd() { printf 'chpasswd\n' >>"$SSH_APPLY_CALLS"; }
@@ -398,17 +399,21 @@ id() { return 1; }
 getent() { printf 'x:x:1000:1000:x:%s:/bin/bash\n' "$FAKE_HOME"; }
 sshd() { return 0; }
 chown() { :; }  # evita "invalid user" tentando chown pra um usuário phonevox que não existe de verdade
-export -f useradd usermod chpasswd id getent sshd chown
+visudo() { return 0; }
+# `install` de verdade faria chown pra root (precisa de privilégio que os testes não têm) — mock
+# registra a chamada e só copia o conteúdo, o suficiente pra testar a idempotência depois.
+install() { printf 'install:%s\n' "$*" >>"$SSH_APPLY_CALLS"; cp "${@: -2:1}" "${@: -1}"; }
+export -f useradd usermod chpasswd id getent sshd chown visudo install
 
 : >"$SSH_APPLY_CALLS"
-netinstall::ssh_hardening_apply 0 '' 0 '' '' 0 '' 0 '' "$(pvx::tmpdir)/sshd-noop.conf"
+netinstall::ssh_hardening_apply 0 '' 0 '' '' 0 '' 0 '' "$(pvx::tmpdir)/sshd-noop.conf" "$SUDOERS_DIR"
 assert_eq 'ssh_hardening_apply: com os 3 desligados, não chama nada e não toca no sshd_config' \
   '' "$(cat "$SSH_APPLY_CALLS")"
 
 : >"$SSH_APPLY_CALLS"
 apply_sshd=$(pvx::tmpdir)/sshd-apply.conf
 printf '#PermitRootLogin prohibit-password\n#Port 22\n' >"$apply_sshd"
-netinstall::ssh_hardening_apply 1 rootpw123 1 phonevox 'ssh-ed25519 AAAA test' 1 userpw456 1 21122 "$apply_sshd"
+netinstall::ssh_hardening_apply 1 rootpw123 1 phonevox 'ssh-ed25519 AAAA test' 1 userpw456 1 21122 "$apply_sshd" "$SUDOERS_DIR"
 
 assert_eq 'ssh_hardening_apply: cria o usuário quando id() diz que não existe' \
   '1' "$(grep -c '^useradd:' "$SSH_APPLY_CALLS")"
@@ -420,26 +425,40 @@ assert_eq 'ssh_hardening_apply: Port 21122 aplicado' \
   'Port 21122' "$(grep -E '^Port ' "$apply_sshd" | tail -n1)"
 assert_eq 'ssh_hardening_apply: chave pública acrescentada ao authorized_keys' \
   '1' "$(grep -c 'ssh-ed25519 AAAA test' "$FAKE_HOME/.ssh/authorized_keys" 2>/dev/null || printf 0)"
+assert_eq 'ssh_hardening_apply: usuário dedicado vira sudoer NOPASSWD (drop-in dedicado)' \
+  'phonevox ALL=(ALL) NOPASSWD: ALL' "$(cat "$SUDOERS_DIR/phonevox" 2>/dev/null)"
 
-# idempotência: rodar de novo (usuário "já existe" agora) não duplica a chave nem chama useradd
+# idempotência: rodar de novo (usuário "já existe" agora) não duplica a chave, não chama useradd
+# de novo, nem reinstala a regra de sudo (já está lá, idêntica)
 : >"$SSH_APPLY_CALLS"
 id() { return 0; }
-netinstall::ssh_hardening_apply 1 rootpw123 1 phonevox 'ssh-ed25519 AAAA test' 1 userpw456 1 21122 "$apply_sshd"
+netinstall::ssh_hardening_apply 1 rootpw123 1 phonevox 'ssh-ed25519 AAAA test' 1 userpw456 1 21122 "$apply_sshd" "$SUDOERS_DIR"
 assert_eq 'ssh_hardening_apply: rodar de novo (usuário já existe) não chama useradd de novo' \
   '0' "$(grep -c '^useradd:' "$SSH_APPLY_CALLS")"
 assert_eq 'ssh_hardening_apply: rodar de novo não duplica a chave no authorized_keys' \
   '1' "$(grep -c 'ssh-ed25519 AAAA test' "$FAKE_HOME/.ssh/authorized_keys")"
+assert_eq 'ssh_hardening_apply: rodar de novo não reinstala a regra de sudo NOPASSWD' \
+  '0' "$(grep -c '^install:' "$SSH_APPLY_CALLS")"
+
+# visudo -cf reprova a sintaxe => não instala a regra de sudo (nem toca no sudoers.d de verdade)
+: >"$SSH_APPLY_CALLS"
+id() { return 1; }
+visudo() { return 1; }
+netinstall::ssh_hardening_apply 0 '' 1 outrouser 'ssh-ed25519 AAAA test' 0 '' 0 '' "$apply_sshd" "$SUDOERS_DIR"
+assert_eq 'ssh_hardening_apply: visudo -cf reprovando a sintaxe não instala a regra de sudo' \
+  '0' "$(grep -c '^install:' "$SSH_APPLY_CALLS")"
+visudo() { return 0; }
 
 # sshd -t falha => restaura o backup, não deixa o sshd_config quebrado no lugar
 : >"$SSH_APPLY_CALLS"
 sshd() { return 1; }
 apply_sshd_bad=$(pvx::tmpdir)/sshd-apply-bad.conf
 printf '#Port 22\n' >"$apply_sshd_bad"
-netinstall::ssh_hardening_apply 0 '' 0 '' '' 0 '' 1 21122 "$apply_sshd_bad"
+netinstall::ssh_hardening_apply 0 '' 0 '' '' 0 '' 1 21122 "$apply_sshd_bad" "$SUDOERS_DIR"
 assert_eq 'ssh_hardening_apply: sshd -t falhando restaura o backup (Port volta a não estar ativo)' \
   '0' "$(grep -cE '^Port 21122' "$apply_sshd_bad")"
 
-unset -f useradd usermod chpasswd id getent sshd chown
+unset -f useradd usermod chpasswd id getent sshd chown visudo install
 
 # --- ask_password: sem TTY (caso deste próprio runner de testes) nunca trava, sempre devolve ---
 # --- algo pronto pra uso, e nunca escreve o valor gerado em stdout misturado com o prompt ------
